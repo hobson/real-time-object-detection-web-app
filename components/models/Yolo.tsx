@@ -4,7 +4,7 @@ import ops from 'ndarray-ops';
 import ObjectDetectionCamera from '../ObjectDetectionCamera';
 import { round } from 'lodash';
 import { yoloClasses } from '../../data/yolo_classes';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useEffect } from 'react';
 import { runModelUtils } from '../../utils';
 
@@ -17,12 +17,52 @@ const RES_TO_MODEL: [number[], string][] = [
   [[640, 640], 'yolov7-tiny_640x640.onnx'],
 ];
 
+// Classes that should trigger a push notification to the taco ntfy server.
+// License plates aren't a COCO class - detecting them needs a dedicated
+// ALPR model, not yet wired up.
+const NOTIFY_CLASSES = new Set(['person', 'car']);
+const NOTIFY_MIN_INTERVAL_MS = 30_000;
+// Public CORS-enabled proxy on taco (see /notify-proxy) that forwards to
+// ntfy - called directly from the browser so the ntfy token never has to
+// live in this app's client bundle or server.
+const NOTIFY_ENDPOINT =
+  process.env.NEXT_PUBLIC_NOTIFY_URL ||
+  'https://taco.tail9f615d.ts.net:8443/notify';
+
 const Yolo = (props: any) => {
   const [modelResolution, setModelResolution] = useState<number[]>(
     RES_TO_MODEL[0][0]
   );
   const [modelName, setModelName] = useState<string>(RES_TO_MODEL[0][1]);
   const [session, setSession] = useState<any>(null);
+  const lastNotifiedAt = useRef<number>(0);
+
+  const notifyDetection = (
+    ctx: CanvasRenderingContext2D,
+    detectedClasses: string[]
+  ) => {
+    const matched = detectedClasses.filter((c) => NOTIFY_CLASSES.has(c));
+    if (matched.length === 0) return;
+
+    const now = Date.now();
+    if (now - lastNotifiedAt.current < NOTIFY_MIN_INTERVAL_MS) return;
+    lastNotifiedAt.current = now;
+
+    ctx.canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        const uniqueClasses = Array.from(new Set(matched));
+        fetch(
+          `${NOTIFY_ENDPOINT}?title=${encodeURIComponent(
+            uniqueClasses.join(', ') + ' detected'
+          )}&tags=camera`,
+          { method: 'POST', body: blob }
+        ).catch((e) => console.error('Failed to send ntfy notification', e));
+      },
+      'image/jpeg',
+      0.8
+    );
+  };
 
   useEffect(() => {
     const getSession = async () => {
@@ -165,7 +205,9 @@ const Yolo = (props: any) => {
 
     if (modelName in postprocessMap) {
       console.log('Using postprocess for', modelName);
-      postprocessMap[modelName](ctx, modelResolution, tensor, conf2color);
+      postprocessMap[modelName](ctx, modelResolution, tensor, conf2color, (detectedClasses) =>
+        notifyDetection(ctx, detectedClasses)
+      );
     }
   };
 
@@ -190,7 +232,8 @@ type PostprocessFunction = (
   ctx: CanvasRenderingContext2D,
   modelResolution: number[],
   tensor: Tensor,
-  conf2color: (conf: number) => string
+  conf2color: (conf: number) => string,
+  onDetections: (detectedClasses: string[]) => void
 ) => void;
 
 // Non-Maximum Suppression helper function
@@ -260,16 +303,18 @@ const postprocessYolov12: PostprocessFunction = (
   ctx: CanvasRenderingContext2D,
   modelResolution: number[],
   tensor: Tensor,
-  conf2color: (conf: number) => string
+  conf2color: (conf: number) => string,
+  onDetections: (detectedClasses: string[]) => void
 ) => {
-  postprocessYolov11(ctx, modelResolution, tensor, conf2color);
+  postprocessYolov11(ctx, modelResolution, tensor, conf2color, onDetections);
 };
 
 const postprocessYolov11: PostprocessFunction = (
   ctx: CanvasRenderingContext2D,
   modelResolution: number[],
   tensor: Tensor,
-  conf2color: (conf: number) => string
+  conf2color: (conf: number) => string,
+  onDetections: (detectedClasses: string[]) => void
 ) => {
   const dx = ctx.canvas.width / modelResolution[0];
   const dy = ctx.canvas.height / modelResolution[1];
@@ -335,6 +380,8 @@ const postprocessYolov11: PostprocessFunction = (
   // Apply Non-Maximum Suppression (simple version)
   const nmsDetections = applyNMS(detections, 0.4);
 
+  onDetections(nmsDetections.map((d) => yoloClasses[d.classId]));
+
   // Draw the detections
   for (const detection of nmsDetections) {
     // Scale to canvas size
@@ -369,13 +416,15 @@ const postprocessYolov10: PostprocessFunction = (
   ctx: CanvasRenderingContext2D,
   modelResolution: number[],
   tensor: Tensor,
-  conf2color: (conf: number) => string
+  conf2color: (conf: number) => string,
+  onDetections: (detectedClasses: string[]) => void
 ) => {
   const dx = ctx.canvas.width / modelResolution[0];
   const dy = ctx.canvas.height / modelResolution[1];
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
+  const detectedClasses: string[] = [];
   let x0, y0, x1, y1, cls_id, score;
   // yolov10n output tensor is [1, all_boxes, 6]
   // console.log(tensor.dims);
@@ -384,6 +433,7 @@ const postprocessYolov10: PostprocessFunction = (
     if ((score as any) < 0.25) {
       break;
     }
+    detectedClasses.push(yoloClasses[cls_id as any]);
 
     // scale to canvas size
     [x0, x1] = [x0, x1].map((x: any) => x * dx);
@@ -413,18 +463,22 @@ const postprocessYolov10: PostprocessFunction = (
     ctx.fillStyle = color.replace(')', ', 0.2)').replace('rgb', 'rgba');
     ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
   }
+
+  onDetections(detectedClasses);
 };
 
 const postprocessYolov7: PostprocessFunction = (
   ctx: CanvasRenderingContext2D,
   modelResolution: number[],
   tensor: Tensor,
-  conf2color: (conf: number) => string
+  conf2color: (conf: number) => string,
+  onDetections: (detectedClasses: string[]) => void
 ) => {
   const dx = ctx.canvas.width / modelResolution[0];
   const dy = ctx.canvas.height / modelResolution[1];
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  const detectedClasses: string[] = [];
   let batch_id, x0, y0, x1, y1, cls_id, score;
   // Output tensor of yolov7-tiny is [det_num, 7]
   // console.log(tensor.dims);
@@ -433,6 +487,7 @@ const postprocessYolov7: PostprocessFunction = (
       i * 7,
       i * 7 + 7
     );
+    detectedClasses.push(yoloClasses[cls_id as any]);
 
     // scale to canvas size
     [x0, x1] = [x0, x1].map((x: any) => x * dx);
@@ -462,4 +517,6 @@ const postprocessYolov7: PostprocessFunction = (
     ctx.fillStyle = color.replace(')', ', 0.2)').replace('rgb', 'rgba');
     ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
   }
+
+  onDetections(detectedClasses);
 };
