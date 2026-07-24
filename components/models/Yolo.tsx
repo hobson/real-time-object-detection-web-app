@@ -306,14 +306,22 @@ const Yolo = (props: any) => {
     }
   };
 
+  const detect = async (ctx: CanvasRenderingContext2D): Promise<number> => {
+    const data = preprocess(ctx);
+    const [outputTensor, inferenceTime] = await runModelUtils.runModel(
+      session,
+      data
+    );
+    await postprocess(outputTensor, inferenceTime, ctx, modelName);
+    return inferenceTime;
+  };
+
   return (
     <ObjectDetectionCamera
       width={props.width}
       height={props.height}
-      preprocess={preprocess}
-      postprocess={postprocess}
-      // resizeCanvasCtx={resizeCanvasCtx}
-      session={session}
+      ready={!!session}
+      detect={detect}
       sessionError={sessionError}
       secondsUntilTimeout={secondsUntilTimeout}
       loadAttempt={loadAttempt}
