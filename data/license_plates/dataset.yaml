@@ -1,0 +1,8 @@
+# ultralytics-compatible dataset config.
+# Usage: yolo detect train data=data/license_plates/dataset.yaml model=... (see PLAN.md)
+path: .  # relative to this file
+train: train.txt
+val: val.txt
+
+names:
+  0: license_plate

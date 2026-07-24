@@ -155,3 +155,7 @@ public/runtime/
 .DS_Store
 .vercel
 __pycache__/
+
+# Downloaded dataset images (large, re-downloadable - see PLAN.md). Labels,
+# splits, and the plan itself are small text files and stay tracked.
+data/license_plates/images/
