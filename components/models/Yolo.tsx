@@ -29,9 +29,29 @@ const NOTIFY_ENDPOINT =
   process.env.NEXT_PUBLIC_NOTIFY_URL ||
   'https://taco.tail9f615d.ts.net:8443/notify';
 
-// Worst-case observed load time (WASM + ~10-25MB model file) is on the
-// order of 30s on slow cellular; give it a bit of headroom before giving up.
-const SESSION_LOAD_TIMEOUT_MS = 45_000;
+// taco is served over a Tailscale Funnel, which relays all traffic through
+// Tailscale's infrastructure rather than a direct connection - measured as
+// low as ~15KB/s for large file transfers. A 10-25MB model/wasm file can
+// take minutes, and a mid-transfer hiccup throws immediately (e.g.
+// "Content-Length header of network response exceeds response Body"), so a
+// generous per-attempt timeout plus automatic retry-with-backoff is needed
+// rather than a single short-timeout attempt.
+const SESSION_LOAD_TIMEOUT_MS = 120_000;
+const MAX_LOAD_ATTEMPTS = 5;
+const retryBackoffMs = (attempt: number) =>
+  Math.min(30_000, 3_000 * 2 ** (attempt - 1)); // 3s, 6s, 12s, 24s, 30s...
+
+const extractErrorDetail = (e: unknown): string =>
+  // onnxruntime-web/wasm sometimes throws non-Error values (plain strings,
+  // WASM abort objects) that don't survive `instanceof Error`, so fall back
+  // to pulling whatever detail is available.
+  e instanceof Error
+    ? e.message
+    : typeof e === 'string'
+    ? e
+    : e && typeof e === 'object' && 'message' in e
+    ? String((e as { message: unknown }).message)
+    : JSON.stringify(e);
 
 const Yolo = (props: any) => {
   const [modelResolution, setModelResolution] = useState<number[]>(
@@ -43,6 +63,8 @@ const Yolo = (props: any) => {
   const [secondsUntilTimeout, setSecondsUntilTimeout] = useState<number>(
     SESSION_LOAD_TIMEOUT_MS / 1000
   );
+  const [loadAttempt, setLoadAttempt] = useState(1);
+  const [retryingIn, setRetryingIn] = useState<number | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const lastNotifiedAt = useRef<number>(0);
 
@@ -74,63 +96,74 @@ const Yolo = (props: any) => {
   };
 
   useEffect(() => {
-    let settled = false;
+    let cancelled = false;
     setSession(null);
     setSessionError(null);
-    setSecondsUntilTimeout(SESSION_LOAD_TIMEOUT_MS / 1000);
+    setLoadAttempt(1);
+    setRetryingIn(null);
 
-    const countdown = setInterval(() => {
-      setSecondsUntilTimeout((s) => Math.max(0, s - 1));
-    }, 1000);
+    const attemptLoad = async (attempt: number): Promise<void> => {
+      if (cancelled) return;
+      setLoadAttempt(attempt);
+      setRetryingIn(null);
+      setSecondsUntilTimeout(SESSION_LOAD_TIMEOUT_MS / 1000);
 
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      clearInterval(countdown);
-      setSessionError(
-        `Timed out loading ${modelName} after ${
-          SESSION_LOAD_TIMEOUT_MS / 1000
-        }s. Check your connection and try again.`
-      );
-    }, SESSION_LOAD_TIMEOUT_MS);
+      const countdown = setInterval(() => {
+        setSecondsUntilTimeout((s) => Math.max(0, s - 1));
+      }, 1000);
 
-    const getSession = async () => {
+      let settled = false;
+      const onFailure = async (e: unknown) => {
+        if (settled || cancelled) return;
+        settled = true;
+        clearInterval(countdown);
+        console.error(`Model load attempt ${attempt} failed`, e);
+
+        if (attempt >= MAX_LOAD_ATTEMPTS) {
+          setSessionError(
+            `Failed to load ${modelName} after ${MAX_LOAD_ATTEMPTS} attempts: ${extractErrorDetail(
+              e
+            )}`
+          );
+          return;
+        }
+
+        const backoffMs = retryBackoffMs(attempt);
+        let remaining = Math.ceil(backoffMs / 1000);
+        setRetryingIn(remaining);
+        const backoffInterval = setInterval(() => {
+          remaining -= 1;
+          setRetryingIn(Math.max(0, remaining));
+        }, 1000);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        clearInterval(backoffInterval);
+        if (cancelled) return;
+        attemptLoad(attempt + 1);
+      };
+
+      const timeout = setTimeout(() => {
+        onFailure(new Error(`Timed out after ${SESSION_LOAD_TIMEOUT_MS / 1000}s`));
+      }, SESSION_LOAD_TIMEOUT_MS);
+
       try {
         const session = await runModelUtils.createModelCpu(
           `/runtime/${modelName}`
         );
-        if (settled) return;
+        if (settled || cancelled) return;
         settled = true;
         clearTimeout(timeout);
         clearInterval(countdown);
         setSession(session);
       } catch (e) {
-        if (settled) return;
-        settled = true;
         clearTimeout(timeout);
-        clearInterval(countdown);
-        console.error('Failed to load model session', e);
-        // onnxruntime-web/wasm sometimes throws non-Error values (plain
-        // strings, WASM abort objects) that don't survive `instanceof
-        // Error`, so fall back to pulling whatever detail is available
-        // rather than a generic message that hides the real cause.
-        const detail =
-          e instanceof Error
-            ? e.message
-            : typeof e === 'string'
-            ? e
-            : e && typeof e === 'object' && 'message' in e
-            ? String((e as { message: unknown }).message)
-            : JSON.stringify(e);
-        setSessionError(`Failed to load ${modelName}: ${detail}`);
+        onFailure(e);
       }
     };
-    getSession();
+
+    attemptLoad(1);
 
     return () => {
-      settled = true;
-      clearTimeout(timeout);
-      clearInterval(countdown);
+      cancelled = true;
     };
   }, [modelName, modelResolution, retryCount]);
 
@@ -283,6 +316,9 @@ const Yolo = (props: any) => {
       session={session}
       sessionError={sessionError}
       secondsUntilTimeout={secondsUntilTimeout}
+      loadAttempt={loadAttempt}
+      maxLoadAttempts={MAX_LOAD_ATTEMPTS}
+      retryingIn={retryingIn}
       onRetrySession={retrySessionLoad}
       changeCurrentModelResolution={changeModelResolution}
       currentModelResolution={modelResolution}

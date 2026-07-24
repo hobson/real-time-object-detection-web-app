@@ -10,6 +10,9 @@ const ObjectDetectionCamera = (props: {
   session: InferenceSession | null;
   sessionError: string | null;
   secondsUntilTimeout: number;
+  loadAttempt: number;
+  maxLoadAttempts: number;
+  retryingIn: number | null;
   onRetrySession: () => void;
   preprocess: (ctx: CanvasRenderingContext2D) => Tensor;
   postprocess: (
@@ -199,13 +202,27 @@ const ObjectDetectionCamera = (props: {
                   Retry
                 </button>
               </>
+            ) : props.retryingIn !== null ? (
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+                  aria-hidden="true"
+                ></span>
+                <span>
+                  Attempt {props.loadAttempt} of {props.maxLoadAttempts}{' '}
+                  failed, retrying in {props.retryingIn}s...
+                </span>
+              </div>
             ) : (
               <div className="flex items-center gap-2">
                 <span
                   className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
                   aria-hidden="true"
                 ></span>
-                <span>Loading model... ({props.secondsUntilTimeout}s)</span>
+                <span>
+                  Loading model (attempt {props.loadAttempt} of{' '}
+                  {props.maxLoadAttempts})... ({props.secondsUntilTimeout}s)
+                </span>
               </div>
             )}
           </div>
