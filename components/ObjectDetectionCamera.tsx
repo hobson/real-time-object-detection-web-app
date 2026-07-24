@@ -7,7 +7,10 @@ const ObjectDetectionCamera = (props: {
   width: number;
   height: number;
   modelName: string;
-  session: InferenceSession;
+  session: InferenceSession | null;
+  sessionError: string | null;
+  secondsUntilTimeout: number;
+  onRetrySession: () => void;
   preprocess: (ctx: CanvasRenderingContext2D) => Tensor;
   postprocess: (
     outputTensor: Tensor,
@@ -182,6 +185,31 @@ const ObjectDetectionCamera = (props: {
         ></canvas>
       </div>
       <div className="flex flex-col items-center justify-center">
+        {!props.session && (
+          <div className="flex flex-col items-center gap-2 m-3">
+            {props.sessionError ? (
+              <>
+                <div className="text-red-500 text-center max-w-xs">
+                  {props.sessionError}
+                </div>
+                <button
+                  onClick={props.onRetrySession}
+                  className="p-2 border-2 border-dashed rounded-xl hover:translate-y-1"
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+                  aria-hidden="true"
+                ></span>
+                <span>Loading model... ({props.secondsUntilTimeout}s)</span>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex flex-row flex-wrap items-center justify-center gap-1 m-5">
           <div className="flex items-stretch items-center justify-center gap-1">
             <button
@@ -193,7 +221,7 @@ const ObjectDetectionCamera = (props: {
               }}
               className="p-2 border-2 border-dashed rounded-xl hover:translate-y-1 disabled:opacity-40 disabled:pointer-events-none"
             >
-              {props.session ? 'Capture Photo' : 'Loading model...'}
+              Capture Photo
             </button>
             <button
               disabled={!props.session}
@@ -211,7 +239,7 @@ const ObjectDetectionCamera = (props: {
 
               `}
             >
-              {props.session ? 'Live Detection' : 'Loading model...'}
+              Live Detection
             </button>
           </div>
           <div className="flex items-stretch items-center justify-center gap-1">

@@ -29,12 +29,21 @@ const NOTIFY_ENDPOINT =
   process.env.NEXT_PUBLIC_NOTIFY_URL ||
   'https://taco.tail9f615d.ts.net:8443/notify';
 
+// Worst-case observed load time (WASM + ~10-25MB model file) is on the
+// order of 30s on slow cellular; give it a bit of headroom before giving up.
+const SESSION_LOAD_TIMEOUT_MS = 45_000;
+
 const Yolo = (props: any) => {
   const [modelResolution, setModelResolution] = useState<number[]>(
     RES_TO_MODEL[0][0]
   );
   const [modelName, setModelName] = useState<string>(RES_TO_MODEL[0][1]);
   const [session, setSession] = useState<any>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [secondsUntilTimeout, setSecondsUntilTimeout] = useState<number>(
+    SESSION_LOAD_TIMEOUT_MS / 1000
+  );
+  const [retryCount, setRetryCount] = useState(0);
   const lastNotifiedAt = useRef<number>(0);
 
   const notifyDetection = (
@@ -65,14 +74,57 @@ const Yolo = (props: any) => {
   };
 
   useEffect(() => {
-    const getSession = async () => {
-      const session = await runModelUtils.createModelCpu(
-        `./_next/static/chunks/pages/${modelName}`
+    let settled = false;
+    setSession(null);
+    setSessionError(null);
+    setSecondsUntilTimeout(SESSION_LOAD_TIMEOUT_MS / 1000);
+
+    const countdown = setInterval(() => {
+      setSecondsUntilTimeout((s) => Math.max(0, s - 1));
+    }, 1000);
+
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      clearInterval(countdown);
+      setSessionError(
+        `Timed out loading ${modelName} after ${
+          SESSION_LOAD_TIMEOUT_MS / 1000
+        }s. Check your connection and try again.`
       );
-      setSession(session);
+    }, SESSION_LOAD_TIMEOUT_MS);
+
+    const getSession = async () => {
+      try {
+        const session = await runModelUtils.createModelCpu(
+          `./_next/static/chunks/pages/${modelName}`
+        );
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        clearInterval(countdown);
+        setSession(session);
+      } catch (e) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        clearInterval(countdown);
+        console.error('Failed to load model session', e);
+        setSessionError(
+          e instanceof Error ? e.message : `Failed to load ${modelName}.`
+        );
+      }
     };
     getSession();
-  }, [modelName, modelResolution]);
+
+    return () => {
+      settled = true;
+      clearTimeout(timeout);
+      clearInterval(countdown);
+    };
+  }, [modelName, modelResolution, retryCount]);
+
+  const retrySessionLoad = () => setRetryCount((n) => n + 1);
 
   const changeModelResolution = (width?: number, height?: number) => {
     if (width !== undefined && height !== undefined) {
@@ -219,6 +271,9 @@ const Yolo = (props: any) => {
       postprocess={postprocess}
       // resizeCanvasCtx={resizeCanvasCtx}
       session={session}
+      sessionError={sessionError}
+      secondsUntilTimeout={secondsUntilTimeout}
+      onRetrySession={retrySessionLoad}
       changeCurrentModelResolution={changeModelResolution}
       currentModelResolution={modelResolution}
       modelName={modelName}
