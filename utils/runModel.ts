@@ -1,4 +1,10 @@
-import { InferenceSession, Tensor } from 'onnxruntime-web';
+import { env, InferenceSession, Tensor } from 'onnxruntime-web';
+
+// onnxruntime-web resolves .wasm files relative to its own script URL by
+// default, which mobile browsers (e.g. Firefox/Fennec) resolve differently
+// than desktop and can fail entirely ("no available backend found"). Point
+// it explicitly at where next.config.js's CopyPlugin actually puts them.
+env.wasm.wasmPaths = '/_next/static/chunks/pages/';
 
 export async function createModelCpu(url: string): Promise<InferenceSession> {
   return await InferenceSession.create(url, {

@@ -26,7 +26,7 @@ const nextConfig = {
           // },
           {
             from: './node_modules/onnxruntime-web/dist/*.wasm',
-            to: 'static/chunks/pages',
+            to: 'static/chunks/pages/[name][ext]',
           },
           {
             from: './models',
