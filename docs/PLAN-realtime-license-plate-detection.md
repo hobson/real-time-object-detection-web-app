@@ -1,4 +1,18 @@
-# License plate detection: dataset + fine-tuning plan
+# License plate detection + reading (OCR): dataset + fine-tuning plan
+
+This plan targets **in-browser inference first** (the app's default,
+original mode — see [`realtime-object-detection.md`](./realtime-object-detection.md))
+so plate detection/reading works the same way the existing 80 COCO
+classes do: entirely client-side, no data leaving the phone unless
+notifications are enabled. Where the browser path has real added cost or
+complexity (mainly: OCR model size, see §4), an **optional** taco
+server-side alternative is noted — see
+[`realtime-object-detection.md` §4](./realtime-object-detection.md#4-pick-a-mode-in-browser-vs-server-side)
+for the existing In-browser/Server-side toggle this would plug into.
+
+The dataset itself lives in `data/license_plates/` (images gitignored,
+~221MB, re-downloadable — see §1); only this plan document moved to
+`docs/`.
 
 ## 1. Dataset
 
@@ -14,7 +28,7 @@ downloaded files were converted to YOLO format directly instead — see
 `/tmp/.../convert_oiv7_plates.py` in this session's scratch dir for the
 conversion script (not committed; trivial to regenerate, ~40 lines).
 
-**Layout** (this directory):
+**Layout** (`data/license_plates/`):
 ```
 images/       724 .jpg files
 labels/       724 .txt files, YOLO format (class_id cx cy w h, normalized 0-1)
@@ -194,21 +208,29 @@ painful directly on an exported `.onnx` graph.
    python -m onnxruntime.tools.convert_onnx_models_to_ort best.onnx --save_optimized_onnx_model
    ```
 
-7. **Wire it into the app** (both inference paths use the same output
-   format, so both need the same three edits):
+7. **Wire it into the app — browser path (primary):**
    - Drop the new `.onnx` into `/models/`.
-   - Add a `RES_TO_MODEL` entry in `components/models/Yolo.tsx`
-     (client-side) and the equivalent `RES_TO_MODEL`/model list in
-     `inference-server/main.py` (server-side).
-   - Append `"license_plate"` to `data/yolo_classes.ts` *and*
-     `inference-server/yolo_classes.py` (kept in sync manually - see the
-     comment already in the Python file), and bump the `80` in
-     `NUM_CLASSES`/`4 + NUM_CLASSES` slicing in both
-     `postprocessYolov11`/`postprocessYolov12` (`Yolo.tsx`) and
-     `postprocess_yolov11_12` (`inference-server/postprocess.py`) to `81`.
-   - Add `"license_plate"` to `NOTIFY_CLASSES` in `Yolo.tsx` /
-     `YoloServer.tsx` if plate detections should also trigger the ntfy
-     notification (currently only `person`/`car` do).
+   - Add a `RES_TO_MODEL` entry in `components/models/Yolo.tsx`.
+   - Append `"license_plate"` to `data/yolo_classes.ts`, and bump the `80`
+     in `NUM_CLASSES`/`4 + NUM_CLASSES` slicing in
+     `postprocessYolov11`/`postprocessYolov12` (`Yolo.tsx`) to `81`.
+   - Add `license_plate: 'license_plate'` to `CLASS_TO_TOPIC` in
+     `utils/notify.ts` if plate detections should also trigger an ntfy
+     notification (see
+     [`realtime-object-notification.md`](./realtime-object-notification.md)
+     — the topic name `object-detection-license_plate` is already reserved
+     there, waiting on this model).
+
+   **Optional — also wire into the taco server-side path**, if you want
+   plate detection available there too (e.g. for lower-end phones using
+   Server-side mode, or once OCR pushes the model past what's comfortable
+   to ship to a browser — see §4): the equivalent three edits in
+   `inference-server/main.py` (`RES_TO_MODEL`/model list),
+   `inference-server/yolo_classes.py` (append the class, kept in sync with
+   `data/yolo_classes.ts` manually), and `postprocess_yolov11_12` in
+   `inference-server/postprocess.py` (bump `NUM_CLASSES` to 81). Not
+   required for the browser path to work — the two inference paths are
+   independent and don't have to ship the same model set simultaneously.
 
 ### Open question worth deciding before starting
 
@@ -218,3 +240,106 @@ needs `onnxruntime-web >= 1.18` per the earlier debugging this session) or
 deployment history). No strong reason to prefer one over the other for
 this specific task — pick whichever this app ends up standardizing on
 long-term.
+
+## 4. Reading the plate (OCR)
+
+§§1-3 only get a *bounding box* around a plate — "there's a plate here,"
+not "the plate says ABC-1234." Actually reading the characters is a
+second, independent model/pipeline stage that runs *after* detection,
+cropping the detected box and feeding just that crop to an OCR step.
+Nothing here has been built yet — this section documents the approach,
+same status as the rest of this plan.
+
+### Why this is a separate model from detection
+
+YOLO (detection) answers "where," and is deliberately cheap/fast because
+it runs on every frame. Reading characters is a fundamentally different
+task — small, often low-contrast/angled text — and needs either a
+dedicated OCR architecture or a general-purpose OCR engine. Bolting text
+recognition onto the same YOLO output (e.g. as 36 more "classes" for
+A-Z/0-9) doesn't work well in practice: character segmentation within a
+tiny, perspective-distorted crop is a different problem than "is there a
+car-shaped rectangle in this general area," and mixing the two tasks in
+one model tends to hurt both.
+
+### Option A (primary target — runs in-browser): a small CRNN plate-OCR model
+
+A **CRNN** (Convolutional Recurrent Neural Network — convolutional
+feature extraction feeding an RNN/CTC decoder for the character
+sequence) is the standard lightweight architecture for plate OCR
+specifically (used across most open ALPR pipelines, e.g. the
+`openalpr`/`easyocr`-adjacent projects surfaced in the dataset research
+for §1). Small ones (a few MB, similar order of magnitude to the YOLO
+nano models already in `/models/`) export to ONNX and run through
+**the same `onnxruntime-web` pipeline already built** — no new browser
+runtime/architecture needed, just a second model loaded alongside the
+detector.
+
+**Pipeline (client-side, `Yolo.tsx`):**
+1. Run plate detection as normal (§§1-3) — get a bounding box.
+2. Crop that region out of the source canvas (`ctx.getImageData` on the
+   box's pixel coordinates, same pattern `preprocess()` already uses for
+   the full frame).
+3. Resize/normalize the crop to the OCR model's expected input (typically
+   a fixed height, variable width for CRNNs — check the specific
+   checkpoint's requirements).
+4. Run the OCR model's `InferenceSession` on the crop (second
+   `runModelUtils.createModelCpu()` call, second small download).
+5. CTC-decode the output sequence to a string (greedy decode is fine to
+   start — collapse repeated characters, drop the blank token).
+
+**Where to get a starting checkpoint:** pretrained plate-OCR ONNX models
+exist publicly (e.g. searches during §1's dataset research surfaced
+`morsetechlab/yolov11-license-plate-detection` on Hugging Face and
+several ALPR repos bundling a CRNN OCR stage) — worth evaluating an
+existing pretrained one before training from scratch, since character
+recognition (unlike "what does a license plate look like," which
+benefits from this project's own fine-tuning in §§1-3) is a fairly
+universal task where public checkpoints often transfer reasonably well
+without local fine-tuning. If accuracy on this app's actual camera/plates
+isn't good enough, fine-tuning would need its own labeled dataset
+(cropped plate images + ground-truth text) — a different, smaller
+dataset than §1's, not yet sourced.
+
+**Cost:** a second ~few-MB-to-low-tens-of-MB download, on top of the
+detector's. Given this session's whole debugging arc was about a single
+~10-25MB download being painful over taco's Tailscale Funnel, a second
+model download is a real cost to weigh — pick the smallest CRNN
+checkpoint that hits acceptable accuracy, and reuse the existing
+retry-with-backoff loading UI (`SESSION_LOAD_TIMEOUT_MS`/`MAX_LOAD_ATTEMPTS`
+in `Yolo.tsx`) rather than building new loading UX for it.
+
+### Option B (suggestion — taco server-side): PaddleOCR or EasyOCR
+
+If the in-browser CRNN's accuracy or download-size cost isn't acceptable,
+run OCR server-side instead, as an additional stage in
+`inference-server/main.py`'s `/predict` handler: detect plates as usual,
+crop server-side, run the crop through **PaddleOCR** or **EasyOCR**
+(both are full-featured, much more accurate general OCR engines than a
+minimal CRNN, at the cost of being much heavier — hundreds of MB of
+model weights, meaningfully slower per-inference than the nano YOLO
+detectors currently running there). Since taco already runs
+`inference-server` as its own systemd service with room to add Python
+dependencies, this is a straightforward *addition*, not a new service —
+add `easyocr`/`paddleocr` to `inference-server/requirements.txt`, load it
+once at startup alongside the existing `onnxruntime.InferenceSession`
+objects, and add the crop+OCR step to the response before returning
+JSON. The response schema would need a new field per detection (e.g.
+`"text": "ABC1234"`) alongside the existing `class`/`confidence`/`box`.
+
+This only benefits **Server-side mode** (§4 of
+[`realtime-object-detection.md`](./realtime-object-detection.md)) — it
+doesn't help the in-browser path at all, since the OCR would run on
+taco, not the phone. Worth doing if server-side becomes the primary mode
+for this app, or as a higher-accuracy fallback/comparison against
+Option A's lighter in-browser CRNN.
+
+### Recommendation
+
+Start with Option A (in-browser CRNN) to keep this feature working the
+same way as the rest of the app (client-side, no data leaving the
+phone) — it's the better fit for this app's stated design intent. Fall
+back to or add Option B only if in-browser accuracy proves inadequate
+for real use, since it's a meaningfully bigger lift (new server
+dependencies, hundreds of MB of weights, only benefits one of the two
+inference modes).
