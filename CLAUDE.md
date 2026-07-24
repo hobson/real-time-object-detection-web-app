@@ -37,7 +37,7 @@ There is no test suite configured in this repo.
 
 - **`data/yolo_classes.ts`**: the 80 COCO class labels, indexed by `cls_id` from model output.
 
-- **Model files live in `/models/*.onnx`** and are copied into `static/chunks/pages/` at build time via a webpack `CopyPlugin` config in `next.config.js` (along with the ONNX Runtime `.wasm` binaries). Models are loaded at runtime via a relative fetch from `./_next/static/chunks/pages/<modelName>` — this is why new model files must be dropped in `/models/` (not e.g. `public/`).
+- **Model files live in `/models/*.onnx`** and are copied into `public/runtime/` at build time via a webpack `CopyPlugin` config in `next.config.js` (along with the ONNX Runtime `.wasm` binaries). Models are loaded at runtime via a fetch from `/runtime/<modelName>` — this is why new model files must be dropped in `/models/` (the CopyPlugin picks them up automatically). `public/runtime/` (not `/_next/static/`) is deliberate: these files are unhashed, so their URL doesn't change when content does (e.g. an onnxruntime-web version bump), but Next.js hardcodes an unconditional immutable 1-year `Cache-Control` for the entire `/_next/static/` tree with no override possible — that mismatch is what caused a stale cached wasm binary to link against new JS glue code after a version upgrade. `public/runtime/` gets an explicit `no-cache` header instead (see `headers()` in `next.config.js`), so browsers always revalidate.
 
 - **PWA**: `next-pwa` wraps the Next config (`next.config.js`) to generate a service worker into `public/` for offline installability.
 

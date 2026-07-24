@@ -146,6 +146,9 @@ sw.js.map
 precache-manifest.*.js
 workbox-*.js
 
+# Build-time copy of the wasm runtime + .onnx models (see CopyPlugin in next.config.js)
+public/runtime/
+
 # Others
 .vscode/
 .venv/

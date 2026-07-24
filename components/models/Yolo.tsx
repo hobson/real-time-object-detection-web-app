@@ -97,7 +97,7 @@ const Yolo = (props: any) => {
     const getSession = async () => {
       try {
         const session = await runModelUtils.createModelCpu(
-          `./_next/static/chunks/pages/${modelName}`
+          `/runtime/${modelName}`
         );
         if (settled) return;
         settled = true;
@@ -110,9 +110,19 @@ const Yolo = (props: any) => {
         clearTimeout(timeout);
         clearInterval(countdown);
         console.error('Failed to load model session', e);
-        setSessionError(
-          e instanceof Error ? e.message : `Failed to load ${modelName}.`
-        );
+        // onnxruntime-web/wasm sometimes throws non-Error values (plain
+        // strings, WASM abort objects) that don't survive `instanceof
+        // Error`, so fall back to pulling whatever detail is available
+        // rather than a generic message that hides the real cause.
+        const detail =
+          e instanceof Error
+            ? e.message
+            : typeof e === 'string'
+            ? e
+            : e && typeof e === 'object' && 'message' in e
+            ? String((e as { message: unknown }).message)
+            : JSON.stringify(e);
+        setSessionError(`Failed to load ${modelName}: ${detail}`);
       }
     };
     getSession();

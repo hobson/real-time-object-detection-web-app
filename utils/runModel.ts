@@ -4,7 +4,7 @@ import { env, InferenceSession, Tensor } from 'onnxruntime-web';
 // default, which mobile browsers (e.g. Firefox/Fennec) resolve differently
 // than desktop and can fail entirely ("no available backend found"). Point
 // it explicitly at where next.config.js's CopyPlugin actually puts them.
-env.wasm.wasmPaths = '/_next/static/chunks/pages/';
+env.wasm.wasmPaths = '/runtime/';
 // The threaded wasm backend needs SharedArrayBuffer, which requires
 // cross-origin-isolation headers (COOP/COEP) this app doesn't send. Without
 // them it's unreliable across browsers (especially mobile Firefox), so
