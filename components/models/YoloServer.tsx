@@ -1,5 +1,6 @@
 import ObjectDetectionCamera from '../ObjectDetectionCamera';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { useNotifyDetection } from '../../utils/notify';
 
 // Alternative to Yolo.tsx: instead of downloading a ~20MB wasm runtime +
 // model and running inference in the browser, capture a frame and post it
@@ -20,12 +21,6 @@ const MODELS = [
 const INFERENCE_ENDPOINT =
   process.env.NEXT_PUBLIC_INFERENCE_URL ||
   'https://taco.tail9f615d.ts.net:8443/infer';
-
-const NOTIFY_CLASSES = new Set(['person', 'car']);
-const NOTIFY_MIN_INTERVAL_MS = 30_000;
-const NOTIFY_ENDPOINT =
-  process.env.NEXT_PUBLIC_NOTIFY_URL ||
-  'https://taco.tail9f615d.ts.net:8443/notify';
 
 // The inference server itself is small and fast to reach (no large
 // download), so a much shorter timeout/retry budget than the client-side
@@ -57,7 +52,7 @@ const YoloServer = (props: any) => {
   const [loadAttempt, setLoadAttempt] = useState(1);
   const [retryingIn, setRetryingIn] = useState<number | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const lastNotifiedAt = useRef<number>(0);
+  const notifyDetection = useNotifyDetection();
 
   // Confirms the inference server is actually reachable before enabling
   // the capture/live-detection buttons, with the same retry-with-backoff
@@ -147,30 +142,6 @@ const YoloServer = (props: any) => {
     const r = Math.round(255 * (1 - conf));
     const g = Math.round(255 * conf);
     return `rgb(${r},${g},0)`;
-  };
-
-  const notifyDetection = (ctx: CanvasRenderingContext2D, classes: string[]) => {
-    const matched = classes.filter((c) => NOTIFY_CLASSES.has(c));
-    if (matched.length === 0) return;
-
-    const now = Date.now();
-    if (now - lastNotifiedAt.current < NOTIFY_MIN_INTERVAL_MS) return;
-    lastNotifiedAt.current = now;
-
-    ctx.canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-        const uniqueClasses = Array.from(new Set(matched));
-        fetch(
-          `${NOTIFY_ENDPOINT}?title=${encodeURIComponent(
-            uniqueClasses.join(', ') + ' detected'
-          )}&tags=camera`,
-          { method: 'POST', body: blob }
-        ).catch((e) => console.error('Failed to send ntfy notification', e));
-      },
-      'image/jpeg',
-      0.8
-    );
   };
 
   const detect = async (ctx: CanvasRenderingContext2D): Promise<number> => {

@@ -4,9 +4,10 @@ import ops from 'ndarray-ops';
 import ObjectDetectionCamera from '../ObjectDetectionCamera';
 import { round } from 'lodash';
 import { yoloClasses } from '../../data/yolo_classes';
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useEffect } from 'react';
 import { runModelUtils } from '../../utils';
+import { useNotifyDetection } from '../../utils/notify';
 
 const RES_TO_MODEL: [number[], string][] = [
   [[256, 256], 'yolo12n.onnx'],
@@ -16,18 +17,6 @@ const RES_TO_MODEL: [number[], string][] = [
   [[320, 320], 'yolov7-tiny_320x320.onnx'],
   [[640, 640], 'yolov7-tiny_640x640.onnx'],
 ];
-
-// Classes that should trigger a push notification to the taco ntfy server.
-// License plates aren't a COCO class - detecting them needs a dedicated
-// ALPR model, not yet wired up.
-const NOTIFY_CLASSES = new Set(['person', 'car']);
-const NOTIFY_MIN_INTERVAL_MS = 30_000;
-// Public CORS-enabled proxy on taco (see /notify-proxy) that forwards to
-// ntfy - called directly from the browser so the ntfy token never has to
-// live in this app's client bundle or server.
-const NOTIFY_ENDPOINT =
-  process.env.NEXT_PUBLIC_NOTIFY_URL ||
-  'https://taco.tail9f615d.ts.net:8443/notify';
 
 // taco is served over a Tailscale Funnel, which relays all traffic through
 // Tailscale's infrastructure rather than a direct connection - measured as
@@ -66,34 +55,7 @@ const Yolo = (props: any) => {
   const [loadAttempt, setLoadAttempt] = useState(1);
   const [retryingIn, setRetryingIn] = useState<number | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const lastNotifiedAt = useRef<number>(0);
-
-  const notifyDetection = (
-    ctx: CanvasRenderingContext2D,
-    detectedClasses: string[]
-  ) => {
-    const matched = detectedClasses.filter((c) => NOTIFY_CLASSES.has(c));
-    if (matched.length === 0) return;
-
-    const now = Date.now();
-    if (now - lastNotifiedAt.current < NOTIFY_MIN_INTERVAL_MS) return;
-    lastNotifiedAt.current = now;
-
-    ctx.canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-        const uniqueClasses = Array.from(new Set(matched));
-        fetch(
-          `${NOTIFY_ENDPOINT}?title=${encodeURIComponent(
-            uniqueClasses.join(', ') + ' detected'
-          )}&tags=camera`,
-          { method: 'POST', body: blob }
-        ).catch((e) => console.error('Failed to send ntfy notification', e));
-      },
-      'image/jpeg',
-      0.8
-    );
-  };
+  const notifyDetection = useNotifyDetection();
 
   useEffect(() => {
     let cancelled = false;

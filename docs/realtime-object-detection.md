@@ -83,29 +83,19 @@ switched to.
 Below the buttons you'll see live inference time, total time (including
 camera/draw overhead), and FPS stats.
 
-## 6. Get notified when it sees a person or car
+## 6. Get notified when it sees something
 
 The app can push a phone notification (with the captured photo attached)
-whenever it detects a **person** or **car**, rate-limited to once every
-30 seconds so it doesn't spam you. This happens automatically in both
-modes once you're running Live Detection or Capture Photo — you don't
-need to do anything in the app itself. To actually *receive* the
-notification, though, you need to subscribe once:
+whenever it detects one of several object types — person, car, laptop,
+dog, and more — rate-limited to once per object type every 30 seconds so
+it doesn't spam you. This happens automatically in both modes once you're
+running Live Detection or Capture Photo — you don't need to do anything in
+the app itself.
 
-1. Install the **ntfy** app
-   ([Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy) /
-   [iOS](https://apps.apple.com/us/app/ntfy/id1625396347)), or use
-   [the web UI](https://ntfy.sh/app) in a browser.
-2. Add a subscription with:
-   - **Server:** `https://taco.tail9f615d.ts.net`
-   - **Username:** `subscriber`
-   - **Password:** the read-only token (ask whoever set up the server —
-     stored in this repo's local `.env`, which is gitignored and not
-     committed)
-   - **Topic:** `object-detection`
-
-Once subscribed, any person/car detection anywhere the app is used
-(anyone's phone, not just yours) will push a notification to you.
+Each object type has its own notification topic, so you choose exactly
+which ones you want to hear about. See
+[`realtime-object-notification.md`](./realtime-object-notification.md)
+for the full list of topics and how to subscribe.
 
 ## Troubleshooting
 
