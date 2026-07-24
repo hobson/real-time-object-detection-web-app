@@ -5,6 +5,11 @@ import { env, InferenceSession, Tensor } from 'onnxruntime-web';
 // than desktop and can fail entirely ("no available backend found"). Point
 // it explicitly at where next.config.js's CopyPlugin actually puts them.
 env.wasm.wasmPaths = '/_next/static/chunks/pages/';
+// The threaded wasm backend needs SharedArrayBuffer, which requires
+// cross-origin-isolation headers (COOP/COEP) this app doesn't send. Without
+// them it's unreliable across browsers (especially mobile Firefox), so
+// force single-threaded execution instead of depending on isolation headers.
+env.wasm.numThreads = 1;
 
 export async function createModelCpu(url: string): Promise<InferenceSession> {
   return await InferenceSession.create(url, {
@@ -28,6 +33,6 @@ export async function runModel(
     return [output, inferenceTime];
   } catch (e) {
     console.error(e);
-    throw new Error();
+    throw e;
   }
 }

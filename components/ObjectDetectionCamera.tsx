@@ -60,6 +60,7 @@ const ObjectDetectionCamera = (props: {
   };
 
   const runModel = async (ctx: CanvasRenderingContext2D) => {
+    if (!props.session) return;
     const data = props.preprocess(ctx);
     let outputTensor: Tensor;
     let inferenceTime: number;
@@ -77,6 +78,7 @@ const ObjectDetectionCamera = (props: {
       liveDetection.current = false;
       return;
     }
+    if (!props.session) return;
     liveDetection.current = true;
     while (liveDetection.current) {
       const startTime = Date.now();
@@ -183,16 +185,18 @@ const ObjectDetectionCamera = (props: {
         <div className="flex flex-row flex-wrap items-center justify-center gap-1 m-5">
           <div className="flex items-stretch items-center justify-center gap-1">
             <button
+              disabled={!props.session}
               onClick={async () => {
                 const startTime = Date.now();
                 await processImage();
                 setTotalTime(Date.now() - startTime);
               }}
-              className="p-2 border-2 border-dashed rounded-xl hover:translate-y-1 "
+              className="p-2 border-2 border-dashed rounded-xl hover:translate-y-1 disabled:opacity-40 disabled:pointer-events-none"
             >
-              Capture Photo
+              {props.session ? 'Capture Photo' : 'Loading model...'}
             </button>
             <button
+              disabled={!props.session}
               onClick={async () => {
                 if (liveDetection.current) {
                   liveDetection.current = false;
@@ -202,12 +206,12 @@ const ObjectDetectionCamera = (props: {
               }}
               //on hover, shift the button up
               className={`
-              p-2  border-dashed border-2 rounded-xl hover:translate-y-1 
+              p-2  border-dashed border-2 rounded-xl hover:translate-y-1 disabled:opacity-40 disabled:pointer-events-none
               ${liveDetection.current ? 'bg-white text-black' : ''}
-              
+
               `}
             >
-              Live Detection
+              {props.session ? 'Live Detection' : 'Loading model...'}
             </button>
           </div>
           <div className="flex items-stretch items-center justify-center gap-1">
