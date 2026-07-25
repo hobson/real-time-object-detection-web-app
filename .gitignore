@@ -159,3 +159,9 @@ __pycache__/
 # Downloaded dataset images (large, re-downloadable - see PLAN.md). Labels,
 # splits, and the plan itself are small text files and stay tracked.
 data/license_plates/images/
+data/license_plates/labels.cache
+
+# Fine-tuning: downloaded base checkpoints and training run output (both
+# large, both regeneratable by running training/finetune_license_plate.py)
+*.pt
+runs/
