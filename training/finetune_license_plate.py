@@ -49,10 +49,46 @@ import argparse
 
 import torch
 from ultralytics import YOLO
+from ultralytics.nn.modules import block as _ultra_block
 
 CAR_CLASS_IDX = 2  # COCO index for "car" - the warm-start source
 NEW_CLASS_IDX = 80  # license_plate becomes the 81st class (index 80)
 NUM_ORIGINAL_CLASSES = 80
+
+
+# Structural fix for the ultralytics version-skew bug documented in
+# restore_attention_position_encoding_bias() below: patch AAttn so every
+# instance constructed in this process - not just the ones this script
+# happens to touch - gets its attn.pe.conv built with a real bias
+# parameter, same as the actual released yolo12n.pt checkpoint has.
+#
+# This matters beyond just fixing the initial model: ultralytics creates
+# *multiple* independent copies of the architecture during training
+# (ModelEMA's shadow model at trainer setup, and again during its
+# fitness-collapse/NaN auto-recovery, which reloads a historical
+# checkpoint's EMA state into the live model - see
+# ultralytics.engine.trainer.BaseTrainer._handle_nan_recovery). Every one
+# of those was constructed by re-running this exact module's __init__,
+# so patching only the live in-memory model after the fact (the previous
+# approach) left every other copy without the parameter - fine until
+# recovery tried to load_state_dict() across the mismatch, which crashes
+# outright (missing key), and made resuming from a checkpoint unsafe in
+# general, not just when recovery fires. Patching the class itself before
+# any model gets built means every copy is structurally consistent from
+# birth; only the *values* need restoring afterward, not the parameter's
+# existence.
+_original_aattn_init = _ultra_block.AAttn.__init__
+
+
+def _patched_aattn_init(self, *args, **kwargs):
+    _original_aattn_init(self, *args, **kwargs)
+    if self.pe.conv.bias is None:
+        self.pe.conv.bias = torch.nn.Parameter(
+            torch.zeros(self.pe.conv.out_channels)
+        )
+
+
+_ultra_block.AAttn.__init__ = _patched_aattn_init
 
 
 def _cv3_layers(branch):
@@ -131,29 +167,29 @@ ATTENTION_BLOCK_INDICES = [6, 8]  # backbone A2C2f blocks (yolo12n specifically)
 
 
 def restore_attention_position_encoding_bias(live_model, base_model_path: str):
-    """Works around an ultralytics version-skew bug (found empirically,
-    not documented anywhere): the currently-installed ultralytics
-    reconstructs A2C2f's attn.pe.conv layers with bias=False, but the
-    actual released yolo12n.pt checkpoint has bias=True there. This has
-    nothing to do with nc/class-count changes - it reproduces identically
-    for a from-scratch nc=80 reconstruction too - it's purely an
-    architecture-definition mismatch between whatever ultralytics version
-    originally exported this checkpoint and the one installed now.
+    """Defense-in-depth value check/restore for the attn.pe.conv bias bug
+    described at length next to the _patched_aattn_init monkeypatch above
+    (which is the actual, structural fix - this function should now find
+    nothing to do in the normal case, since the parameter loads correctly
+    via standard checkpoint loading once every AAttn instance has it from
+    construction). Kept as a safety net in case some future ultralytics
+    reconstruction path does something that skips the by-name/shape
+    weight transfer for these specific keys.
 
-    Silently dropping 8 small bias terms (4 per attention block x 2
-    blocks) sounds minor but measurably degraded every class's output in
-    testing (e.g. car's raw confidence on a test frame dropped from an
-    exact-baseline-matching 0.378 to 0.074, ~5x) - YOLOv12's A2C2f blocks
-    lean heavily on attention, so even small positional-encoding bias
-    differences shift attention patterns more than a typical small-weight
-    perturbation would. Confirmed fixed: restoring these 8 biases makes
-    old classes' raw output byte-identical to the untouched pretrained
-    model (not just close) in testing.
-
-    This is NOT part of the class-head surgery (prepare_class_head) since
-    it's unrelated to adding a class - it's a general reconstruction-
-    fidelity bug that would apply to ANY fine-tune of this checkpoint
-    that changes nc, even without adding a new class at all.
+    Background for why this bug exists at all: the currently-installed
+    ultralytics builds A2C2f's attn.pe.conv without a bias parameter, but
+    the actual released yolo12n.pt checkpoint has one, with real trained
+    values - an architecture-definition mismatch between whatever
+    ultralytics version originally exported this checkpoint and the one
+    installed now, unrelated to nc/class-count changes (reproduces
+    identically reconstructing at nc=80 too). Silently dropping 8 small
+    bias terms (4 per attention block x 2 blocks) sounds minor but
+    measurably degraded every class's output in testing (e.g. car's raw
+    confidence on a test frame dropped from an exact-baseline-matching
+    0.378 to 0.074, ~5x) - YOLOv12's A2C2f blocks lean heavily on
+    attention, so even small positional-encoding bias differences shift
+    attention patterns more than a typical small-weight perturbation
+    would.
     """
     pretrained = YOLO(base_model_path)
     restored = 0
