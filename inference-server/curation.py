@@ -9,18 +9,27 @@ from the FastAPI inference server (different process, different port):
 Then open http://localhost:5001/. Mounted at the app's own root (not
 `/admin`) so it also works unmodified behind a reverse proxy that strips a
 path prefix before forwarding (e.g. `tailscale funnel --set-path=/admin`) -
-the proxy's prefix supplies what would otherwise be `/admin` externally.
+the proxy's prefix supplies what would otherwise be `/admin` externally. Set
+`ADMIN_ROOT_PATH=/admin` (matching whatever prefix is actually funneled to
+this service) so Flask's own `url_for()` - used for the home-page redirect
+and for every static asset link, including Flask-Admin's bundled CSS/JS -
+generates paths with that prefix baked in, e.g. `/admin/static/compact.css`
+instead of a root-absolute `/static/compact.css` the browser would resolve
+against the wrong (unprefixed) URL.
 
 Patterns used throughout
 ------------------------
-_BaseView(ModelView)
-    Injects compact.css + hotkeys.js on every list and detail page.
-_HomeView(AdminIndexView)
-    AdminIndexView does NOT inherit ModelView's extra_css, so it needs its
-    own extra_css/extra_js to get the compact stylesheet on the home page.
+_CompactMixin
+    Injects compact.css + hotkeys.js on every list, detail, and home page
+    (via url_for so paths stay correct behind ADMIN_ROOT_PATH).
+_RootPathMiddleware
+    Sets WSGI's SCRIPT_NAME so url_for() is prefix-aware; see ADMIN_ROOT_PATH
+    above.
 column_editable_list
     Click-to-edit cells in the list view via Flask-Admin's x-editable widget.
 """
+from functools import cached_property
+
 from flask import Flask, redirect, url_for
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
@@ -37,13 +46,38 @@ import os
 FLASK_SECRET = os.environ.get("FLASK_SECRET", "dev-secret-key-change-in-production")
 
 
+class _RootPathMiddleware:
+    """Make url_for() prefix-aware behind a proxy that strips ADMIN_ROOT_PATH
+    before forwarding (see module docstring)."""
+
+    def __init__(self, wsgi_app, root_path):
+        self.wsgi_app = wsgi_app
+        self.root_path = root_path
+
+    def __call__(self, environ, start_response):
+        environ["SCRIPT_NAME"] = self.root_path
+        return self.wsgi_app(environ, start_response)
+
+
 # ---------------------------------------------------------------------------
 # Base view — compact margins + keyboard shortcuts on every page
 # ---------------------------------------------------------------------------
 
-class _BaseView(ModelView):
-    extra_css = ["/static/compact.css"]
-    extra_js = ["/static/hotkeys.js"]
+class _CompactMixin:
+    # cached_property: url_for's output is invariant for the app's lifetime
+    # (same static filename + ADMIN_ROOT_PATH), so no need to recompute it
+    # on every page render.
+    @cached_property
+    def extra_css(self):
+        return [url_for("static", filename="compact.css")]
+
+    @cached_property
+    def extra_js(self):
+        return [url_for("static", filename="hotkeys.js")]
+
+
+class _BaseView(_CompactMixin, ModelView):
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -127,11 +161,8 @@ class DetectionLabelView(_BaseView):
 # App factory
 # ---------------------------------------------------------------------------
 
-class _HomeView(AdminIndexView):
+class _HomeView(_CompactMixin, AdminIndexView):
     """Redirect /admin/ to the submitted-images table; inject compact CSS."""
-
-    extra_css = ["/static/compact.css"]
-    extra_js = ["/static/hotkeys.js"]
 
     @expose("/")
     def index(self):
@@ -146,10 +177,14 @@ def create_app(db_url: str | None = None) -> Flask:
     app.config["SQLALCHEMY_DATABASE_URI"] = db_url or str(engine_from_env().url)
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-    db = SQLAlchemy(app, model_class=Base)
+    root_path = os.environ.get("ADMIN_ROOT_PATH", "")
+    if root_path:
+        app.wsgi_app = _RootPathMiddleware(app.wsgi_app, root_path)
 
-    with app.app_context():
-        db.create_all()
+    # Tables are created once via `python orm.py` (see docs/user-manual.md
+    # §3), not here - this avoids every gunicorn worker re-running DDL
+    # schema checks against Postgres on every startup/restart.
+    db = SQLAlchemy(app, model_class=Base)
 
     admin = Admin(
         app,

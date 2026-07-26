@@ -12,12 +12,13 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 
 from alpr import router as alpr_router
+from limits import validate_body_size
 from persist import persist_submission
 from postprocess import POSTPROCESS_MAP
 
@@ -32,12 +33,14 @@ RES_TO_MODEL = {
     "yolov7-tiny_640x640.onnx": (640, 640),
 }
 DEFAULT_MODEL = "yolo12n.onnx"
-MAX_BODY_BYTES = 5 * 1024 * 1024  # 5MB, plenty for a JPEG frame
 
 _sessions: dict[str, ort.InferenceSession] = {}
 
 
 def get_session(model_name: str) -> ort.InferenceSession:
+    # No lock: this server runs as a single uvicorn worker, and this function
+    # has no `await`, so a coroutine calling it always runs to completion
+    # before another gets the event loop - no concurrent-init race is possible.
     if model_name not in _sessions:
         model_path = MODELS_DIR / model_name
         if not model_path.exists():
@@ -69,15 +72,15 @@ def models():
 
 
 @app.post("/predict")
-async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
+async def predict(
+    request: Request,
+    model: str = Query(DEFAULT_MODEL),
+    body: bytes = Body(..., media_type="image/jpeg"),
+):
     if model not in RES_TO_MODEL:
         raise HTTPException(status_code=400, detail=f"Unknown model {model}")
 
-    body = await request.body()
-    if not body:
-        raise HTTPException(status_code=400, detail="Empty request body")
-    if len(body) > MAX_BODY_BYTES:
-        raise HTTPException(status_code=413, detail="Image too large")
+    validate_body_size(body)
 
     try:
         image = Image.open(io.BytesIO(body)).convert("RGB")

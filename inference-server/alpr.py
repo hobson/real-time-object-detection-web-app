@@ -38,16 +38,18 @@ between sends rather than relying on the server to drop frames.
 """
 import logging
 import os
+import statistics
 import time
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from open_image_models.detection.core.hub import PlateDetectorModel
 from fast_plate_ocr.inference.hub import OcrModel
 
 from fast_alpr import ALPR
+from limits import MAX_UPLOAD_BYTES, validate_body_size
 from persist import persist_submission
 
 logger = logging.getLogger("alpr")
@@ -58,12 +60,12 @@ DEFAULT_DETECTOR_MODEL: PlateDetectorModel = os.environ.get(
     "ALPR_DETECTOR_MODEL", "yolo-v9-t-384-license-plate-end2end"
 )
 DEFAULT_OCR_MODEL: OcrModel = os.environ.get("ALPR_OCR_MODEL", "cct-xs-v2-global-model")
-MAX_FRAME_BYTES = 5 * 1024 * 1024  # 5MB, plenty for a JPEG frame
 
 _alpr: ALPR | None = None
 
 
 def get_alpr() -> ALPR:
+    # No lock needed - same reasoning as main.py's get_session().
     global _alpr
     if _alpr is None:
         logger.info(
@@ -104,9 +106,9 @@ def _run_alpr(frame: np.ndarray) -> dict:
                 "detectionConfidence": result.detection.confidence,
                 "plate": ocr.text if ocr else None,
                 "ocrConfidence": (
-                    sum(ocr.confidence) / len(ocr.confidence)
-                    if ocr and isinstance(ocr.confidence, list) and ocr.confidence
-                    else (ocr.confidence if ocr and isinstance(ocr.confidence, float) else None)
+                    statistics.mean(ocr.confidence)
+                    if ocr and isinstance(ocr.confidence, list)
+                    else (ocr.confidence if ocr else None)
                 ),
                 "region": ocr.region if ocr else None,
                 "regionConfidence": ocr.region_confidence if ocr else None,
@@ -151,12 +153,38 @@ def health():
 
 
 @router.post("/predict")
-async def predict(request: Request):
-    body = await request.body()
-    if not body:
-        raise HTTPException(status_code=400, detail="Empty request body")
-    if len(body) > MAX_FRAME_BYTES:
-        raise HTTPException(status_code=413, detail="Frame too large")
+async def predict(
+    request: Request,
+    body: bytes = Body(..., media_type="image/jpeg"),
+):
+    """Detect and OCR license plates in a single image.
+
+    **Request body**: raw JPEG bytes (`Content-Type: image/jpeg`) — no
+    multipart form, no `model` query param. The image can be a close-up of a
+    single plate or a full scene (e.g. a whole vehicle or a street photo);
+    the detector locates every plate-shaped region in the frame first, then
+    runs OCR on each one independently, so multiple plates in one image each
+    get their own entry in `detections`.
+
+    **Response**: `{"inferenceTimeMs": float, "detections": [...]}`. Each
+    detection has `box` (`[x0, y0, x1, y1]`, normalized 0-1 against the
+    image's own width/height), `detectionConfidence`, and the OCR result:
+    `plate` (the recognized text), `ocrConfidence`, `region` (best-effort
+    country/region guess), `regionConfidence`. The OCR fields are `null`
+    when a plate box was found but the text couldn't be read confidently —
+    that's a normal outcome for blurry, angled, or partially occluded
+    plates, not an error.
+
+    ```bash
+    curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/alpr/predict" \\
+      --data-binary @plate.jpg -H "Content-Type: image/jpeg"
+    ```
+
+    (The "Try it out" button below sends the same request — pick a file
+    and hit Execute — but the endpoint doesn't accept a `curl -d ''`
+    with no body, since a JPEG is required.)
+    """
+    validate_body_size(body)
     try:
         frame = _decode_jpeg(body)
     except ValueError as e:
@@ -187,7 +215,7 @@ async def alpr_stream(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_bytes()
-            if len(data) > MAX_FRAME_BYTES:
+            if len(data) > MAX_UPLOAD_BYTES:
                 await websocket.send_json({"error": "Frame too large"})
                 continue
             try:

@@ -240,7 +240,17 @@ WASM app) instead of `/infer/openapi.json`. Fixed by passing uvicorn
 generates for the client (docs links, the `servers` field in the OpenAPI
 schema) — it does not change how incoming request paths are matched, so
 this flag must stay in sync with whatever `--set-path` value is actually
-funneled to this service:
+funneled to this service.
+
+The Flask-Admin app has the same problem, since it's mounted at its own
+root: `url_for()` (used for the home-page redirect to `/submittedimage/`,
+and for every static asset link) generates paths without the `/admin`
+prefix, which 404 when the browser resolves them against the real
+(unstripped) domain. Fixed the same way, via `ADMIN_ROOT_PATH=/admin` (see
+the `Environment=` line in `object-detection-curation.service`) — it sets
+WSGI's `SCRIPT_NAME` so Flask's own URL generation stays prefix-aware. Like
+`--root-path` above, this must stay in sync with whatever path
+`tailscale funnel` actually maps to this service:
 
 ```bash
 ssh taco tailscale funnel status

@@ -1,6 +1,7 @@
 import ObjectDetectionCamera from '../ObjectDetectionCamera';
 import { useState, useEffect } from 'react';
 import { useNotifyDetection } from '../../utils/notify';
+import { INFERENCE_ENDPOINT } from '../../utils/inferenceEndpoint';
 
 // Alternative to Yolo.tsx: instead of downloading a ~20MB wasm runtime +
 // model and running inference in the browser, capture a frame and post it
@@ -17,10 +18,6 @@ const MODELS = [
   'yolov7-tiny_320x320.onnx',
   'yolov7-tiny_640x640.onnx',
 ];
-
-const INFERENCE_ENDPOINT =
-  process.env.NEXT_PUBLIC_INFERENCE_URL ||
-  'https://taco.tail9f615d.ts.net:8443/infer';
 
 // The inference server itself is small and fast to reach (no large
 // download), so a much shorter timeout/retry budget than the client-side

@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useEffect } from 'react';
 import { runModelUtils } from '../../utils';
 import { useNotifyDetection } from '../../utils/notify';
+import { useAutoAlprSubmit } from '../../utils/autoAlprSubmit';
 
 const RES_TO_MODEL: [number[], string][] = [
   [[256, 256], 'yolo12n.onnx'],
@@ -56,6 +57,7 @@ const Yolo = (props: any) => {
   const [retryingIn, setRetryingIn] = useState<number | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const notifyDetection = useNotifyDetection();
+  const autoAlprSubmit = useAutoAlprSubmit();
 
   useEffect(() => {
     let cancelled = false;
@@ -267,9 +269,10 @@ const Yolo = (props: any) => {
 
     if (modelName in postprocessMap) {
       console.log('Using postprocess for', modelName);
-      postprocessMap[modelName](ctx, modelResolution, tensor, conf2color, (detectedClasses) =>
-        notifyDetection(ctx, detectedClasses)
-      );
+      postprocessMap[modelName](ctx, modelResolution, tensor, conf2color, (detectedClasses) => {
+        notifyDetection(ctx, detectedClasses);
+        autoAlprSubmit(ctx, detectedClasses);
+      });
     }
   };
 

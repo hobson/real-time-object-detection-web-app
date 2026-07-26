@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 
 from orm import DetectionLabel, SubmittedImage
-from db import get_session
+from db import SessionLocal
 
 logger = logging.getLogger("persist")
 
@@ -47,7 +47,7 @@ def persist_submission(
     """
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
-        session = get_session()
+        session = SessionLocal()
         try:
             submitted = SubmittedImage(
                 sha256=sha256,
