@@ -23,6 +23,22 @@ For local development, run the server yourself (§3) and drop the `/infer`
 prefix (e.g. `http://localhost:8092/predict`) since the prefix is only added
 by taco's reverse-proxy path routing, not by the app itself.
 
+### Interactive docs
+
+FastAPI generates interactive API docs automatically from the route
+definitions — no separate doc-writing to keep in sync:
+
+- **`GET /infer/docs`** — Swagger UI, with a "Try it out" button per
+  endpoint (works for `/predict`/`/alpr/predict` too — pick a file, hit
+  Execute).
+- **`GET /infer/redoc`** — ReDoc, a read-only single-page alternative.
+- **`GET /infer/openapi.json`** — the raw OpenAPI schema, if you're
+  generating a client.
+
+```
+https://taco.tail9f615d.ts.net:10000/infer/docs
+```
+
 ### `GET /health`
 
 ```bash
@@ -213,7 +229,18 @@ on taco for the exact `DATABASE_URL`).
 Path routing on port 10000 is `tailscale funnel` with `--set-path`, which
 **strips the matched prefix before proxying** — the FastAPI/Flask apps
 underneath have no idea they're mounted at `/infer`/`/admin` externally,
-they just see requests at their own root:
+they just see requests at their own root. This is transparent for ordinary
+routes (`/health`, `/predict`, ...), but FastAPI's auto-generated docs page
+embeds an absolute `/openapi.json` URL in its HTML unless told otherwise —
+without the fix below, `/infer/docs` loads but shows "Failed to load API
+definition" because the browser fetches `/openapi.json` (hitting the root
+WASM app) instead of `/infer/openapi.json`. Fixed by passing uvicorn
+`--root-path /infer` (see the `ExecStart` line in
+`object-detection-inference.service`), which only affects URLs FastAPI
+generates for the client (docs links, the `servers` field in the OpenAPI
+schema) — it does not change how incoming request paths are matched, so
+this flag must stay in sync with whatever `--set-path` value is actually
+funneled to this service:
 
 ```bash
 ssh taco tailscale funnel status
