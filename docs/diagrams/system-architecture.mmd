@@ -1,0 +1,41 @@
+flowchart TB
+    Browser["User's Browser\n(phone/laptop, camera feed)"]
+    Vercel["Vercel\nmaster-worktree.vercel.app\n(Next.js mirror)"]
+
+    Funnel10000["Tailscale Funnel :10000\npath-based routing"]
+    Funnel8443["Tailscale Funnel :8443\npath-based routing"]
+
+    subgraph Taco["taco (Tailscale node)"]
+        TacoWeb["Next.js app - taco :3101\npath /\n(In-browser WASM UI)"]
+        FastAPI["FastAPI inference-server :8092\nobject-detection-inference.service\nmain.py: /predict /health /models\nalpr.py: /alpr/predict /alpr/health /alpr/ws"]
+        Curation["Flask-Admin curation.py :8093\nobject-detection-curation.service\n(mounted at /admin)"]
+        NotifyProxy["notify-proxy\n(CORS relay)"]
+
+        Postgres[("Postgres\ninference_server DB")]
+        Disk[["Local disk\nsubmitted image files"]]
+        ModelCache[["ALPR model cache\n~/.cache/open-image-models\n~/.cache/fast-plate-ocr"]]
+    end
+
+    Ntfy["ntfy.sh\n(push notification service)"]
+
+    Training["training/ pipeline (offline)\nfetch_hf_dataset.py + ultralytics export"]
+    Models[["models/*.onnx"]]
+
+    Browser -- "GET /" --> Vercel
+    Browser -- "GET / , GET /admin\nPOST /infer/predict\nPOST /infer/alpr/predict\nWS /infer/alpr/ws" --> Funnel10000
+    Browser -- "POST /notify" --> Funnel8443
+
+    Funnel10000 -- "path /" --> TacoWeb
+    Funnel10000 -- "path /infer" --> FastAPI
+    Funnel10000 -- "path /admin" --> Curation
+    Funnel8443 -- "path /notify" --> NotifyProxy
+    NotifyProxy --> Ntfy
+
+    FastAPI --> Postgres
+    FastAPI --> Disk
+    FastAPI --> ModelCache
+    Curation --> Postgres
+
+    Training --> Models
+    Models -. "build time (CopyPlugin)" .-> TacoWeb
+    Models -. "runtime (MODELS_DIR)" .-> FastAPI

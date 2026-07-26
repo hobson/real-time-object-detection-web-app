@@ -16,6 +16,10 @@ Both are backed by a Postgres database (`orm.py`'s tables) that records
 detection returned for it** — so nothing analyzed through the API is lost;
 it all becomes reviewable/curatable data.
 
+See [`system-architecture.md`](./system-architecture.md) for a network-level
+diagram of how these pieces (and the frontend, Tailscale Funnel routing, and
+training pipeline) fit together.
+
 ## 1. Calling the inference API (`/infer`)
 
 All paths below are relative to `https://taco.tail9f615d.ts.net:10000/infer`.
