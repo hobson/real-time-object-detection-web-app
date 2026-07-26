@@ -6,11 +6,9 @@ so plate detection/reading works the same way the existing 80 COCO
 classes do: entirely client-side, no data leaving the phone unless
 notifications are enabled. Where the browser path has real added cost or
 complexity (mainly: OCR model size, see §4), an **optional** taco
-server-side alternative is noted too — implemented as a second,
-selectable inference mode on the `feature/server-side-inference` branch
-(not yet on `master`; see that branch's `components/models/YoloServer.tsx`
-and `inference-server/`) that this plan's optional server-side steps
-would plug into.
+server-side alternative is noted — see
+[`realtime-object-detection.md` §4](./realtime-object-detection.md#4-pick-a-mode-in-browser-vs-server-side)
+for the existing In-browser/Server-side toggle this would plug into.
 
 The dataset itself lives in `data/license_plates/` (images gitignored,
 ~221MB, re-downloadable — see §1); only this plan document moved to
@@ -329,11 +327,12 @@ objects, and add the crop+OCR step to the response before returning
 JSON. The response schema would need a new field per detection (e.g.
 `"text": "ABC1234"`) alongside the existing `class`/`confidence`/`box`.
 
-This only benefits **Server-side mode** (see `feature/server-side-inference`,
-not yet on `master`) — it doesn't help the in-browser path at all, since
-the OCR would run on taco, not the phone. Worth doing if server-side
-becomes the primary mode for this app, or as a higher-accuracy
-fallback/comparison against Option A's lighter in-browser CRNN.
+This only benefits **Server-side mode** (§4 of
+[`realtime-object-detection.md`](./realtime-object-detection.md)) — it
+doesn't help the in-browser path at all, since the OCR would run on
+taco, not the phone. Worth doing if server-side becomes the primary mode
+for this app, or as a higher-accuracy fallback/comparison against
+Option A's lighter in-browser CRNN.
 
 ### Recommendation
 

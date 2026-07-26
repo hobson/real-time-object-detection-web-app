@@ -9,7 +9,8 @@ import { useRef } from 'react';
 // "tree" and "license_plate" were requested but have no COCO class and no
 // model that currently detects them - left out rather than mapped to
 // something misleading. license_plate is planned; see
-// data/license_plates/PLAN.md for the model work needed first.
+// docs/PLAN-realtime-license-plate-detection.md for the model work needed
+// first.
 export const CLASS_TO_TOPIC: Record<string, string> = {
   person: 'people',
   car: 'car',
