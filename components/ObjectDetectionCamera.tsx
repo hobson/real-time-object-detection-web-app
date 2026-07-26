@@ -1,26 +1,23 @@
 import Webcam from 'react-webcam';
 import { useRef, useState, useEffect, useLayoutEffect } from 'react';
-import { runModelUtils } from '../utils';
-import { InferenceSession, Tensor } from 'onnxruntime-web';
 
 const ObjectDetectionCamera = (props: {
   width: number;
   height: number;
   modelName: string;
-  session: InferenceSession | null;
+  // True once detection can actually run - e.g. a local WASM session
+  // finished loading, or a remote inference server responded healthy.
+  ready: boolean;
   sessionError: string | null;
   secondsUntilTimeout: number;
   loadAttempt: number;
   maxLoadAttempts: number;
   retryingIn: number | null;
   onRetrySession: () => void;
-  preprocess: (ctx: CanvasRenderingContext2D) => Tensor;
-  postprocess: (
-    outputTensor: Tensor,
-    inferenceTime: number,
-    ctx: CanvasRenderingContext2D,
-    modelName: string
-  ) => void;
+  // Fully owns one detection pass: capture -> infer (locally or over the
+  // network) -> draw boxes on ctx -> return inference time in ms. Keeps
+  // this component ignorant of *how* inference happens.
+  detect: (ctx: CanvasRenderingContext2D) => Promise<number>;
   currentModelResolution: number[];
   changeCurrentModelResolution: (width?: number, height?: number) => void;
 }) => {
@@ -66,16 +63,8 @@ const ObjectDetectionCamera = (props: {
   };
 
   const runModel = async (ctx: CanvasRenderingContext2D) => {
-    if (!props.session) return;
-    const data = props.preprocess(ctx);
-    let outputTensor: Tensor;
-    let inferenceTime: number;
-    [outputTensor, inferenceTime] = await runModelUtils.runModel(
-      props.session,
-      data
-    );
-
-    props.postprocess(outputTensor, inferenceTime, ctx, props.modelName);
+    if (!props.ready) return;
+    const inferenceTime = await props.detect(ctx);
     setInferenceTime(inferenceTime);
   };
 
@@ -84,7 +73,7 @@ const ObjectDetectionCamera = (props: {
       liveDetection.current = false;
       return;
     }
-    if (!props.session) return;
+    if (!props.ready) return;
     liveDetection.current = true;
     while (liveDetection.current) {
       const startTime = Date.now();
@@ -188,7 +177,7 @@ const ObjectDetectionCamera = (props: {
         ></canvas>
       </div>
       <div className="flex flex-col items-center justify-center">
-        {!props.session && (
+        {!props.ready && (
           <div className="flex flex-col items-center gap-2 m-3">
             {props.sessionError ? (
               <>
@@ -230,7 +219,7 @@ const ObjectDetectionCamera = (props: {
         <div className="flex flex-row flex-wrap items-center justify-center gap-1 m-5">
           <div className="flex items-stretch items-center justify-center gap-1">
             <button
-              disabled={!props.session}
+              disabled={!props.ready}
               onClick={async () => {
                 const startTime = Date.now();
                 await processImage();
@@ -241,7 +230,7 @@ const ObjectDetectionCamera = (props: {
               Capture Photo
             </button>
             <button
-              disabled={!props.session}
+              disabled={!props.ready}
               onClick={async () => {
                 if (liveDetection.current) {
                   liveDetection.current = false;

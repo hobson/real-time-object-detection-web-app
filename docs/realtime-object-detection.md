@@ -1,20 +1,17 @@
 # Using real-time object detection on your phone
 
 This app runs YOLO object detection on your phone's camera feed, right in
-the browser — no app install required. Inference runs entirely on your
-phone (via ONNX Runtime Web/WASM); nothing about what your camera sees
-ever leaves the device, except captured/notified frames (see §5). It can
-detect 80 everyday object classes (person, car, bicycle, dog, etc. — see
+the browser — no app install required. It can detect 80 everyday object
+classes (person, car, bicycle, dog, etc. — see
 [`data/yolo_classes.ts`](../data/yolo_classes.ts) for the full list) and
-optionally push a notification with a photo when it sees certain object
-types.
+optionally push a notification with a photo when it sees a person or car.
 
 ## 1. Open the app
 
 Visit one of these URLs on your phone:
 
 - **`https://taco.tail9f615d.ts.net:10000/`** — recommended; self-hosted, no usage limits.
-- **`https://master-worktree.vercel.app/`** — Vercel-hosted mirror of the same app.
+- **`https://master-worktree.vercel.app/`** — Vercel-hosted mirror of the same client-side app.
 
 Both require **HTTPS** — the browser will refuse camera access otherwise.
 If you're testing a local dev build instead, see the note at the bottom.
@@ -22,23 +19,25 @@ If you're testing a local dev build instead, see the note at the bottom.
 ## 2. Grant camera permission
 
 The browser will prompt for camera access on first load. Allow it — the
-app can't do anything without it.
+app can't do anything without it, and nothing is uploaded anywhere unless
+you're using notifications (see §5) or Server-side mode (see §4).
 
 ## 3. Wait for "Loading model..." to finish
 
-Before you can detect anything, the app needs to download the detection
-model to your phone (a one-time ~10-25MB download). While that's
-happening, the **Capture Photo** and **Live Detection** buttons are
-disabled and show a spinner:
+Before you can detect anything, the app needs to either download a model
+to your phone (In-browser mode) or confirm it can reach the inference
+server (Server-side mode). While that's happening, the **Capture Photo**
+and **Live Detection** buttons are disabled and show a spinner:
 
 > Loading model (attempt 1 of 5)... (118s)
 
-**This can take a while on a slow connection** — if you're on the
-self-hosted (`taco.tail9f615d.ts.net`) URL, that traffic is relayed
-through Tailscale's infrastructure rather than a direct connection, which
-is measurably slow for large files. Don't worry if the countdown runs
-out — it automatically retries with backoff, up to 5 attempts, and tells
-you which attempt it's on:
+**This can take a while on a slow connection** — the in-browser model
+is a one-time ~10-25MB download, and if you're on the self-hosted
+(`taco.tail9f615d.ts.net`) URL, that traffic is relayed through
+Tailscale's infrastructure rather than a direct connection, which is
+measurably slow for large files. Don't worry if the countdown runs out —
+it automatically retries with backoff, up to 5 attempts, and tells you
+which attempt it's on:
 
 > Attempt 2 of 5 failed, retrying in 6s...
 
@@ -49,7 +48,25 @@ times, or switching to a better connection, usually resolves it.
 
 Once ready, the buttons switch to their normal labels and are enabled.
 
-## 4. Detect objects
+## 4. Pick a mode: In-browser vs Server-side
+
+Two buttons at the top of the page switch between them:
+
+- **In-browser (WASM)** — the default. Inference runs entirely on your
+  phone; nothing about what your camera sees ever leaves the device
+  (except captured/notified frames, see §5). Slower to start (has to
+  download the model first, once per session) but works even if the
+  server is temporarily unreachable, once loaded.
+- **Server-side** — your phone just captures and uploads a JPEG frame per
+  detection; a server does the actual inference and sends back the
+  results. Starts almost instantly (just checks the server is reachable,
+  no big download) and tends to run smoother frame-to-frame, at the cost
+  of every analyzed frame being sent to the server.
+
+Switching modes re-triggers the loading step in §3 for whichever mode you
+switched to.
+
+## 5. Detect objects
 
 - **Capture Photo** — takes a single snapshot, runs detection once, and
   draws labeled boxes on it.
@@ -66,14 +83,14 @@ Once ready, the buttons switch to their normal labels and are enabled.
 Below the buttons you'll see live inference time, total time (including
 camera/draw overhead), and FPS stats.
 
-## 5. Get notified when it sees something
+## 6. Get notified when it sees something
 
 The app can push a phone notification (with the captured photo attached)
 whenever it detects one of several object types — person, car, laptop,
 dog, and more — rate-limited to once per object type every 30 seconds so
-it doesn't spam you. This happens automatically once you're running Live
-Detection or Capture Photo — you don't need to do anything in the app
-itself.
+it doesn't spam you. This happens automatically in both modes once you're
+running Live Detection or Capture Photo — you don't need to do anything in
+the app itself.
 
 Each object type has its own notification topic, so you choose exactly
 which ones you want to hear about. See
@@ -85,9 +102,9 @@ for the full list of topics and how to subscribe.
 | Symptom | Likely cause |
 |---|---|
 | Page loads but camera view is blank/black | Camera permission was denied — check your browser's site settings and re-grant it, then reload. |
-| Stuck on "Loading model..." past 5 retries | Connection is too slow/unstable for the model download. Try better signal/Wi-Fi and tap **Retry**. |
-| Red error message instead of the camera | Read the message — it shows the actual underlying error (e.g. a specific HTTP status or network failure) rather than a generic failure. Tap **Retry**. |
-| No notification arrives despite seeing detections | You likely haven't subscribed yet — see §5. Also check you're not within the 30-second rate-limit window of the last notification. |
+| Stuck on "Loading model..." past 5 retries | Connection is too slow/unstable for the model download. Try switching to **Server-side** mode instead (much smaller download), or move to better signal/Wi-Fi. |
+| Red error message instead of the camera | Read the message — it now shows the actual underlying error (e.g. a specific HTTP status or network failure) rather than a generic failure. Tap **Retry**. |
+| No notification arrives despite seeing detections | You likely haven't subscribed yet — see §6. Also check you're not within the 30-second rate-limit window of the last notification. |
 | Detection boxes look randomly placed/wrong | Try **Change Model** — some model variants are more accurate than others for a given scene. |
 
 ## For local development

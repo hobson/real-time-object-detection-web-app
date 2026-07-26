@@ -27,7 +27,7 @@ seconds.
 | truck | `object-detection-truck` | |
 | bus | `object-detection-bus` | |
 | bird | `object-detection-bird` | |
-| license plate | `object-detection-license_plate` | **Not live yet.** No current model detects license plates — see [`data/license_plates/PLAN.md`](../data/license_plates/PLAN.md) for the dataset and fine-tuning plan to add this. The topic name is reserved for when that model ships; don't subscribe expecting notifications yet. |
+| license plate | `object-detection-license_plate` | **Not live yet.** No current model detects license plates — see [`PLAN-realtime-license-plate-detection.md`](./PLAN-realtime-license-plate-detection.md) for the dataset and fine-tuning plan to add this. The topic name is reserved for when that model ships; don't subscribe expecting notifications yet. |
 | tree | — | **Not supported.** Trees aren't one of the model's 80 object classes and there's no reasonably close substitute (unlike flower→pottedplant), so no topic exists for this. |
 
 Want a different object type added? The model already recognizes 80

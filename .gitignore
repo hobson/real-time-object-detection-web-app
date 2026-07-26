@@ -154,3 +154,33 @@ public/runtime/
 .venv/
 .DS_Store
 .vercel
+__pycache__/
+
+# Downloaded dataset images (large, re-downloadable - see PLAN.md). Labels,
+# splits, and the plan itself are small text files and stay tracked.
+data/license_plates/images/
+data/license_plates/labels.cache
+
+# Raw unlabeled source videos (large, re-downloadable - see data/unlabeled/SOURCES.md).
+data/unlabeled/*.mp4
+
+# Fine-tuning: downloaded base checkpoints and training run output (both
+# large, both regeneratable by running training/finetune_license_plate.py)
+*.pt
+runs/
+
+# External non-plate datasets used to guard against catastrophic forgetting
+# during interleaved fine-tuning (see
+# docs/fine-tune-yolo-on-new-category-interleaved.md) - images are large and
+# re-downloadable/re-extractable; the license_plate labels
+# training/label_plates_via_api.py adds on top of them are NOT re-derivable
+# without re-running that script against the inference-server, so those
+# label directories stay tracked even though the images don't.
+data/external_datasets/coco128/images/
+data/external_datasets/coco128/labels/*.cache
+data/external_datasets/kitti/images/
+
+# inference-server curation DB: submitted-image blobs are re-creatable from
+# live traffic, not meant to be committed; .env holds real DB credentials.
+inference-server/storage/
+inference-server/.env

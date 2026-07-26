@@ -1,0 +1,50 @@
+[project]
+name = "license-plate-training"
+version = "0.1.0"
+description = "License plate fine-tuning scripts for the real-time-object-detection-web-app"
+requires-python = ">=3.10"
+dependencies = [
+    "ultralytics>=8.3",
+    "requests>=2.31",
+    "huggingface_hub>=0.24",
+]
+
+[project.optional-dependencies]
+# CPU-only torch (portable, no GPU driver requirements)
+cpu = ["torch", "torchvision"]
+# GPU training on ROCm (AMD GPU) hosts, e.g. taco (gfx1151 iGPU): `uv sync --extra rocm`
+rocm = ["torch", "torchvision", "pytorch-triton-rocm"]
+# label_app.py only - not needed for fine-tuning itself
+label = ["streamlit>=1.38", "pillow"]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-rocm", extra = "rocm" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-rocm", extra = "rocm" },
+]
+pytorch-triton-rocm = [
+    { index = "pytorch-rocm", extra = "rocm" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.4"
+explicit = true
+
+[tool.uv]
+package = false
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "rocm" },
+    ],
+]

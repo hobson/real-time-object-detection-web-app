@@ -1,0 +1,33 @@
+/* compact.css — full-width container, dense table rows, Firefox scroll fix
+   Loaded on every page via _BaseView.extra_css and _HomeView.extra_css.
+   Bootstrap 4 Flatly defaults to a capped-width container with 15px gutters —
+   unusable for wide data tables.  These overrides fix that.             */
+
+.container {
+    max-width: 100% !important;
+    padding-right: 8px !important;
+    padding-left:  8px !important;
+}
+
+[class*="col-"] {
+    padding-right: 6px !important;
+    padding-left:  6px !important;
+}
+
+.table td,
+.table th {
+    padding: 3px 6px !important;
+    font-size: 0.82em;
+}
+
+.navbar {
+    margin-bottom: 6px !important;
+    padding-top:    4px !important;
+    padding-bottom: 4px !important;
+}
+
+.pagination  { margin: 4px 0 !important; }
+.form-inline { margin-bottom: 4px !important; }
+
+/* Prevent Firefox overscroll bounce from hiding submit buttons at page bottom */
+body { padding-bottom: 80px !important; }
