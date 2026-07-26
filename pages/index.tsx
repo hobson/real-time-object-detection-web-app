@@ -1,10 +1,11 @@
 import Head from "next/head";
 import Yolo from "../components/models/Yolo";
 import YoloServer from "../components/models/YoloServer";
+import AlprServer from "../components/models/AlprServer";
 import { useState } from "react";
 
 export default function Home() {
-  const [mode, setMode] = useState<"local" | "server">("local");
+  const [mode, setMode] = useState<"local" | "server" | "alpr">("local");
 
   return (
     <>
@@ -27,8 +28,22 @@ export default function Home() {
           >
             Server-side
           </button>
+          <button
+            onClick={() => setMode("alpr")}
+            className={`p-2 border-2 border-dashed rounded-xl hover:translate-y-1 ${
+              mode === "alpr" ? "bg-white text-black" : ""
+            }`}
+          >
+            License plates (server, ~1 fps)
+          </button>
         </div>
-        {mode === "local" ? <Yolo /> : <YoloServer />}
+        {mode === "local" ? (
+          <Yolo />
+        ) : mode === "server" ? (
+          <YoloServer />
+        ) : (
+          <AlprServer />
+        )}
         <p className="m-5">
           Created by{" "}
           <a

@@ -17,6 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 
+from alpr import router as alpr_router
+from persist import persist_submission
 from postprocess import POSTPROCESS_MAP
 
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", Path(__file__).parent.parent / "models"))
@@ -53,6 +55,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+app.include_router(alpr_router)
 
 
 @app.get("/health")
@@ -94,6 +97,22 @@ async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
     inference_ms = (time.time() - start) * 1000
 
     detections = POSTPROCESS_MAP[model](output, resolution)
+
+    persist_submission(
+        image_bytes=body,
+        endpoint="/predict",
+        width=image.width,
+        height=image.height,
+        content_type=request.headers.get("content-type"),
+        model_name=model,
+        client_ip=request.client.host if request.client else None,
+        inference_time_ms=inference_ms,
+        status_code=200,
+        detections=[
+            {"class_name": d["class"], "confidence": d["confidence"], "box": d["box"]}
+            for d in detections
+        ],
+    )
 
     return JSONResponse(
         {

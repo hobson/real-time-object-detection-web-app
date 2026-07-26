@@ -1,0 +1,9 @@
+# Extra deps for curation.py (the Flask-Admin data-curation app) only -
+# not needed to run the FastAPI inference server itself.
+flask
+flask-admin
+flask-sqlalchemy
+sqlalchemy
+psycopg2-binary
+python-dotenv
+gunicorn
