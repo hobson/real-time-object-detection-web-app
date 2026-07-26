@@ -184,3 +184,4 @@ data/external_datasets/kitti/images/
 # live traffic, not meant to be committed; .env holds real DB credentials.
 inference-server/storage/
 inference-server/.env
+.env*

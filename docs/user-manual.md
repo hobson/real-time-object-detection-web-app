@@ -170,6 +170,34 @@ funnel URL.
   (`plate_text`, `ocr_confidence`, `region`) are blank for non-ALPR
   detections.
 
+### Correcting machine-labeled detections
+
+The model's output isn't locked in — every field it wrote is a normal
+database row you can fix by hand. There's no "confirm"/"reject" workflow;
+editing a label in place *is* the correction.
+
+1. Find the image in **Submitted Images** (search by `sha256` or filter by
+   `endpoint`/`received_at`) and open its `file_path` on taco's disk to see
+   what was actually submitted — the admin list doesn't render the image
+   inline.
+2. Go to **Detection Labels** and filter by `submitted_image` to see just
+   that image's detections (a `SubmittedImage` row doesn't embed its
+   detections directly — they're a separate, filterable table because one
+   image can have many).
+3. Fix a wrong reading directly:
+   - Misread plate text or wrong class → click-to-edit `plate_text` /
+     `class_name` in the list view, or open the row's full edit form for
+     everything else (`confidence`, box coordinates, `region`,
+     `region_confidence`).
+   - A phantom detection (box shouldn't exist at all) or a missed plate
+     (no box was drawn) → delete the bogus row, or add a new
+     `DetectionLabel` row by hand with `submitted_image` set to the image
+     it belongs to.
+4. Corrections here only fix the historical record for review/export — they
+   don't retrain or otherwise feed back into the live `ALPR_DETECTOR_MODEL`/
+   `ALPR_OCR_MODEL` models serving new requests. To build a training set from
+   corrected examples, copy them into **Dataset Curation** (below) instead.
+
 ### Dataset Curation
 
 A separate, generic YOLO dataset schema — not automatically populated from
