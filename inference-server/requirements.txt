@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+onnxruntime
+numpy
+Pillow
+opencv-python-headless
+fast-alpr
+sqlalchemy
+psycopg2-binary
+python-dotenv
