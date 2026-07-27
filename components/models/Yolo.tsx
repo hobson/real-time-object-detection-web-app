@@ -9,6 +9,7 @@ import { useEffect } from 'react';
 import { runModelUtils } from '../../utils';
 import { useNotifyDetection } from '../../utils/notify';
 import { useAutoAlprSubmit } from '../../utils/autoAlprSubmit';
+import { Detection } from '../../utils/detectionTypes';
 
 // Detections below this score are treated as noise, not just visually
 // suppressed - they're excluded from notifications/auto-ALPR-submit too
@@ -35,6 +36,22 @@ const MODEL_CLASSES: Record<string, string[]> = {
 };
 const classesForModel = (modelName: string) =>
   MODEL_CLASSES[modelName] ?? yoloClasses;
+
+// Shared by both postprocess functions below - box is in canvas-pixel
+// space (already scaled by dx/dy), normalized here to 0-1.
+const toDetection = (
+  cls: string,
+  confidence: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  canvas: HTMLCanvasElement
+): Detection => ({
+  class: cls,
+  confidence,
+  box: [x0 / canvas.width, y0 / canvas.height, x1 / canvas.width, y1 / canvas.height],
+});
 
 // taco is served over a Tailscale Funnel, which relays all traffic through
 // Tailscale's infrastructure rather than a direct connection - measured as
@@ -296,9 +313,9 @@ const Yolo = (props: any) => {
         modelResolution,
         tensor,
         conf2color,
-        (detectedClasses) => {
-          notifyDetection(ctx, detectedClasses);
-          autoAlprSubmit(ctx, detectedClasses, isSingleCapture);
+        (detections) => {
+          notifyDetection(ctx, detections.map((d) => d.class));
+          autoAlprSubmit(ctx, detections, isSingleCapture);
         },
         classesForModel(modelName)
       );
@@ -344,7 +361,7 @@ type PostprocessFunction = (
   modelResolution: number[],
   tensor: Tensor,
   conf2color: (conf: number) => string,
-  onDetections: (detectedClasses: string[]) => void,
+  onDetections: (detections: Detection[]) => void,
   classNames: string[]
 ) => void;
 
@@ -353,7 +370,7 @@ const postprocessYolov10: PostprocessFunction = (
   modelResolution: number[],
   tensor: Tensor,
   conf2color: (conf: number) => string,
-  onDetections: (detectedClasses: string[]) => void,
+  onDetections: (detections: Detection[]) => void,
   classNames: string[]
 ) => {
   const dx = ctx.canvas.width / modelResolution[0];
@@ -361,7 +378,7 @@ const postprocessYolov10: PostprocessFunction = (
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-  const detectedClasses: string[] = [];
+  const detections: Detection[] = [];
   let x0, y0, x1, y1, cls_id, score;
   // yolov10n output tensor is [1, all_boxes, 6]
   // console.log(tensor.dims);
@@ -371,11 +388,14 @@ const postprocessYolov10: PostprocessFunction = (
       // pre-sorted descending, so nothing further can pass either
       break;
     }
-    detectedClasses.push(classNames[cls_id as any]);
 
     // scale to canvas size
     [x0, x1] = [x0, x1].map((x: any) => x * dx);
     [y0, y1] = [y0, y1].map((x: any) => x * dy);
+
+    detections.push(
+      toDetection(classNames[cls_id as any], score as any, x0, y0, x1, y1, ctx.canvas)
+    );
 
     [x0, y0, x1, y1, cls_id] = [x0, y0, x1, y1, cls_id].map((x: any) =>
       round(x)
@@ -402,7 +422,7 @@ const postprocessYolov10: PostprocessFunction = (
     ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
   }
 
-  onDetections(detectedClasses);
+  onDetections(detections);
 };
 
 const postprocessYolov7: PostprocessFunction = (
@@ -410,14 +430,14 @@ const postprocessYolov7: PostprocessFunction = (
   modelResolution: number[],
   tensor: Tensor,
   conf2color: (conf: number) => string,
-  onDetections: (detectedClasses: string[]) => void,
+  onDetections: (detections: Detection[]) => void,
   classNames: string[]
 ) => {
   const dx = ctx.canvas.width / modelResolution[0];
   const dy = ctx.canvas.height / modelResolution[1];
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  const detectedClasses: string[] = [];
+  const detections: Detection[] = [];
   let batch_id, x0, y0, x1, y1, cls_id, score;
   // Output tensor of yolov7-tiny is [det_num, 7]
   // console.log(tensor.dims);
@@ -431,11 +451,14 @@ const postprocessYolov7: PostprocessFunction = (
       // than break
       continue;
     }
-    detectedClasses.push(classNames[cls_id as any]);
 
     // scale to canvas size
     [x0, x1] = [x0, x1].map((x: any) => x * dx);
     [y0, y1] = [y0, y1].map((x: any) => x * dy);
+
+    detections.push(
+      toDetection(classNames[cls_id as any], score as any, x0, y0, x1, y1, ctx.canvas)
+    );
 
     [x0, y0, x1, y1, cls_id] = [x0, y0, x1, y1, cls_id].map((x: any) =>
       round(x)
@@ -462,5 +485,5 @@ const postprocessYolov7: PostprocessFunction = (
     ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
   }
 
-  onDetections(detectedClasses);
+  onDetections(detections);
 };

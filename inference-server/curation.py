@@ -37,9 +37,10 @@ SearchableMixin / auto_sortable_columns / auto_searchable_columns
     rationale; it started as a generalized copy of claude-admin's search
     layer.
 """
+import itertools
 from functools import cached_property
 
-from flask import Flask, redirect, send_from_directory, url_for
+from flask import Flask, send_from_directory, url_for
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
@@ -220,12 +221,61 @@ class DetectionLabelView(_BaseView):
 # App factory
 # ---------------------------------------------------------------------------
 
+# Keyed by endpoint (Flask-Admin derives this from each ModelView's `name`
+# unless overridden - see create_app's admin.add_view calls) rather than
+# duplicated alongside name/category/model there: the home page below reads
+# name/category/model straight off the registered ModelView instances
+# themselves, so only the free-text description - which has no other home -
+# needs maintaining here. A view registered without an entry here just gets
+# no description, rather than silently vanishing from the home page the way
+# a second hand-maintained list could drift.
+VIEW_DESCRIPTIONS = {
+    "submittedimage": (
+        "Every image POSTed to /predict or /alpr/predict (or frame over /alpr/ws) - "
+        "thumbnail, capture EXIF/host metadata, YOLO detection summary, an "
+        "LLM-generated accessibility description, and user tags."
+    ),
+    "detectionlabel": (
+        "One row per detection (server- or client-computed) tied to a submitted "
+        "image - class, box, confidence, and OCR fields for license-plate detections."
+    ),
+    "tag": 'User-curated labels (e.g. "flower", "license tag", "NYC") applied to submitted images.',
+    "dataset": "A named collection of images + labels for training/fine-tuning a custom model.",
+    "datasetclass": "The class index -> name mapping for one dataset (its own labels.txt/data.yaml, in effect).",
+    "datasetimage": "One row per image belonging to a dataset, with its train/val/test split.",
+    "datasetlabel": "One YOLO-format bounding-box label (class + normalized center/width/height) per dataset image.",
+}
+
+
 class _HomeView(_CompactMixin, AdminIndexView):
-    """Redirect /admin/ to the submitted-images table; inject compact CSS."""
+    """Landing page: a feature overview plus a linked, row-counted table of
+    every registered admin view (grouped by category) - the Flask-Admin
+    analogue of FastAPI's auto-generated /docs page for main.py's own
+    endpoints."""
+
+    def __init__(self, db, model_views, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.db = db
+        self.model_views = model_views
 
     @expose("/")
     def index(self):
-        return redirect(url_for("submittedimage.index_view"))
+        sections = [
+            {
+                "category": category,
+                "views": [
+                    {
+                        "endpoint": view.endpoint,
+                        "name": view.name,
+                        "description": VIEW_DESCRIPTIONS.get(view.endpoint, ""),
+                        "count": self.db.session.query(view.model).count(),
+                    }
+                    for view in views
+                ],
+            }
+            for category, views in itertools.groupby(self.model_views, key=lambda v: v.category)
+        ]
+        return self.render("index.html", sections=sections)
 
 
 def create_app(db_url: str | None = None) -> Flask:
@@ -255,20 +305,29 @@ def create_app(db_url: str | None = None) -> Flask:
     # schema checks against Postgres on every startup/restart.
     db = SQLAlchemy(app, model_class=Base)
 
+    # Built once and handed to both admin.add_view() below and _HomeView, so
+    # the home page reads each view's real name/category/model straight off
+    # the same instance actually registered - no second hand-maintained list
+    # to keep in sync (see VIEW_DESCRIPTIONS above). Order matters: same-
+    # category views must stay contiguous for _HomeView's groupby.
+    model_views = [
+        SubmittedImageView(SubmittedImage, db, name="Submitted Images", category="Endpoint Traffic"),
+        DetectionLabelView(DetectionLabel, db, name="Detection Labels", category="Endpoint Traffic"),
+        TagView(Tag, db, name="Tags", category="Endpoint Traffic"),
+        DatasetView(Dataset, db, name="Datasets", category="Dataset Curation"),
+        DatasetClassView(DatasetClass, db, name="Dataset Classes", category="Dataset Curation"),
+        DatasetImageView(DatasetImage, db, name="Dataset Images", category="Dataset Curation"),
+        DatasetLabelView(DatasetLabel, db, name="Dataset Labels", category="Dataset Curation"),
+    ]
+
     admin = Admin(
         app,
         name="Inference Server Curation",
         theme=Bootstrap4Theme(swatch="flatly"),
-        index_view=_HomeView(url="/"),
+        index_view=_HomeView(db, model_views, url="/"),
     )
-
-    admin.add_view(SubmittedImageView(SubmittedImage, db, name="Submitted Images", category="Endpoint Traffic"))
-    admin.add_view(DetectionLabelView(DetectionLabel, db, name="Detection Labels", category="Endpoint Traffic"))
-    admin.add_view(TagView(Tag, db, name="Tags", category="Endpoint Traffic"))
-    admin.add_view(DatasetView(Dataset, db, name="Datasets", category="Dataset Curation"))
-    admin.add_view(DatasetClassView(DatasetClass, db, name="Dataset Classes", category="Dataset Curation"))
-    admin.add_view(DatasetImageView(DatasetImage, db, name="Dataset Images", category="Dataset Curation"))
-    admin.add_view(DatasetLabelView(DatasetLabel, db, name="Dataset Labels", category="Dataset Curation"))
+    for view in model_views:
+        admin.add_view(view)
 
     return app
 

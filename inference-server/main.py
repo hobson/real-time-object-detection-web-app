@@ -10,7 +10,6 @@ import os
 import time
 from pathlib import Path
 
-import numpy as np
 import onnxruntime as ort
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +20,7 @@ from alpr import router as alpr_router
 from describe import enqueue_description, start_worker
 from limits import validate_body_size
 from persist import persist_submission
-from postprocess import POSTPROCESS_MAP
+from postprocess import POSTPROCESS_MAP, preprocess
 from request_parsing import IMAGE_UPLOAD_OPENAPI_EXTRA, parse_image_and_metadata
 
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", Path(__file__).parent.parent / "models"))
@@ -110,9 +109,7 @@ async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 
     resolution = RES_TO_MODEL[model]
-    resized = image.resize(resolution, Image.Resampling.BILINEAR)
-    data = np.asarray(resized, dtype=np.float32) / 255.0  # HWC
-    tensor = np.transpose(data, (2, 0, 1))[np.newaxis, ...].astype(np.float32)  # NCHW
+    tensor = preprocess(image, resolution)
 
     session = get_session(model)
     input_name = session.get_inputs()[0].name

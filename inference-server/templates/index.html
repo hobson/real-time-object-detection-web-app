@@ -1,0 +1,43 @@
+{% extends 'admin/master.html' %}
+
+{% block body %}
+<h1>Inference Server Curation</h1>
+<p class="lead">
+  Data browser for the YOLO/ALPR inference server's own traffic - every image
+  submitted to <code>/predict</code> or <code>/alpr/predict</code> (or frame
+  over <code>/alpr/ws</code>) is logged here alongside its detections, so the
+  models' real-world behavior can be inspected and curated after the fact.
+</p>
+
+<h2>Features</h2>
+<ul>
+  <li><strong>Thumbnails</strong> - a small preview rendered at capture time, shown inline in the Submitted Images list.</li>
+  <li><strong>Capture metadata</strong> - EXIF pulled from the image (camera make/model/focal length/GPS, when present) plus which host ran inference, kept separate from detection metadata.</li>
+  <li><strong>Detection metadata</strong> - a denormalized YOLO detection summary (count + per-class counts) alongside the full per-box <a href="{{ url_for('detectionlabel.index_view') }}">Detection Labels</a>.</li>
+  <li><strong>LLM-generated descriptions</strong> - an accessibility-alt-text-style caption + keywords, generated in the background by a colocated multimodal LLM, editable by hand.</li>
+  <li><strong>User tags</strong> - free-form, case-sensitive labels applied to any submitted image.</li>
+  <li><strong>Full-text search + lexical sorting</strong> - every column below, including JSON blobs and long file paths, is searchable (substring by default; quote for case-sensitive whole-word; <code>*</code> for regex) and sortable.</li>
+</ul>
+
+{% for section in sections %}
+<h2>{{ section.category }}</h2>
+<table class="table table-bordered table-hover" style="max-width: 900px;">
+  <thead>
+    <tr>
+      <th style="width: 220px;">Table</th>
+      <th style="width: 100px;">Rows</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for view in section.views %}
+    <tr>
+      <td><a href="{{ url_for(view.endpoint ~ '.index_view') }}">{{ view.name }}</a></td>
+      <td>{{ view.count }}</td>
+      <td>{{ view.description }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+{% endblock %}

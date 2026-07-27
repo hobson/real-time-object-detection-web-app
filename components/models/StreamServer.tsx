@@ -2,6 +2,7 @@ import ObjectDetectionCamera from '../ObjectDetectionCamera';
 import { useRef, useState, useEffect } from 'react';
 import { useNotifyDetection } from '../../utils/notify';
 import { INFERENCE_ENDPOINT } from '../../utils/inferenceEndpoint';
+import { Detection } from '../../utils/detectionTypes';
 
 // Like YoloServer.tsx, but captures full native camera resolution (instead
 // of the on-page display size) and self-paces to whatever frame rate the
@@ -48,8 +49,6 @@ const extractErrorDetail = (e: unknown): string =>
     : e && typeof e === 'object' && 'message' in e
     ? String((e as { message: unknown }).message)
     : JSON.stringify(e);
-
-type Detection = { class: string; confidence: number; box: number[] };
 
 const StreamServer = (props: any) => {
   const [modelIndex, setModelIndex] = useState(0);

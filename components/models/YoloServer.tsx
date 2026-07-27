@@ -2,6 +2,7 @@ import ObjectDetectionCamera from '../ObjectDetectionCamera';
 import { useState, useEffect } from 'react';
 import { useNotifyDetection } from '../../utils/notify';
 import { INFERENCE_ENDPOINT } from '../../utils/inferenceEndpoint';
+import { Detection } from '../../utils/detectionTypes';
 
 // Alternative to Yolo.tsx: instead of downloading a ~20MB wasm runtime +
 // model and running inference in the browser, capture a frame and post it
@@ -35,8 +36,6 @@ const extractErrorDetail = (e: unknown): string =>
     : e && typeof e === 'object' && 'message' in e
     ? String((e as { message: unknown }).message)
     : JSON.stringify(e);
-
-type Detection = { class: string; confidence: number; box: number[] };
 
 const YoloServer = (props: any) => {
   const [modelIndex, setModelIndex] = useState(0);
