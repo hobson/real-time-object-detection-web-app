@@ -49,6 +49,7 @@ from open_image_models.detection.core.hub import PlateDetectorModel
 from fast_plate_ocr.inference.hub import OcrModel
 
 from fast_alpr import ALPR
+from describe import enqueue_description
 from limits import MAX_UPLOAD_BYTES, validate_body_size
 from persist import persist_submission
 from request_parsing import IMAGE_UPLOAD_OPENAPI_EXTRA, parse_image_and_metadata
@@ -128,9 +129,9 @@ def _persist_alpr(
     result: dict,
     capture_metadata: dict | None = None,
     client_detections: list[dict] | None = None,
-) -> None:
+) -> int | None:
     height, width = frame.shape[:2]
-    persist_submission(
+    return persist_submission(
         image_bytes=jpeg_bytes,
         endpoint=endpoint,
         width=width,
@@ -206,7 +207,7 @@ async def predict(request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     result = _run_alpr(frame)
-    _persist_alpr(
+    submitted_image_id = _persist_alpr(
         frame=frame,
         jpeg_bytes=body,
         endpoint="/alpr/predict",
@@ -215,6 +216,9 @@ async def predict(request: Request):
         capture_metadata=metadata,
         client_detections=client_detections,
     )
+    # Not wired up for /alpr/ws below - see describe.py's module docstring
+    # on why a continuous ~1fps stream would flood the queue.
+    enqueue_description(submitted_image_id, body, "image/jpeg")
     return JSONResponse(result)
 
 

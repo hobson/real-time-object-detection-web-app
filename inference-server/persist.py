@@ -168,7 +168,7 @@ def persist_submission(
     detections: list[dict],
     capture_metadata: dict | None = None,
     client_detections: list[dict] | None = None,
-) -> None:
+) -> int | None:
     """Persist one submitted image plus its detections. `detections` items
     may include any of: class_id, class_name, box (normalized [x0,y0,x1,y1]
     or a (x_center,y_center,width,height) tuple already normalized),
@@ -184,6 +184,10 @@ def persist_submission(
     in-browser YOLO) - same shape as `detections`, persisted as
     DetectionLabel rows with `source="client"` instead of the default
     `"server"`, so the two can be told apart later.
+
+    Returns the new SubmittedImage row's id, or None if persistence itself
+    failed (in which case there's no row for a caller to later attach a
+    background-generated description to - see describe.py).
     """
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
@@ -213,10 +217,12 @@ def persist_submission(
             for det in client_detections or []:
                 session.add(_detection_label(submitted.id, det, model_name, source="client"))
             session.commit()
+            return submitted.id
         finally:
             session.close()
     except Exception:
         logger.exception("Failed to persist submission for endpoint %s", endpoint)
+        return None
 
 
 def _detection_label(submitted_image_id: int, det: dict, model_name: str | None, *, source: str) -> DetectionLabel:

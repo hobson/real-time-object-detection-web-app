@@ -28,7 +28,7 @@ from enum import Enum
 
 from sqlalchemy import (
     JSON, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String,
-    UniqueConstraint, create_engine, func,
+    Text, UniqueConstraint, create_engine, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -164,6 +164,14 @@ class SubmittedImage(Base):
     # migration tooling (see curation.py's module docstring) and the exact
     # fields keep evolving.
     capture_metadata: Mapped[dict | None] = mapped_column(JSON)
+    # Generated after the fact by describe.py's background queue (a
+    # multimodal LLM call is way too slow to run inline with /predict) - an
+    # accessibility-alt-text-style caption plus keywords. Editable in the
+    # admin (see curation.py) since the model's wording won't always be
+    # exactly what a curator wants. Null until the background job gets to
+    # it, or if that job hasn't been run at all yet (see describe.py's
+    # `main()` for backfilling existing rows).
+    description: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

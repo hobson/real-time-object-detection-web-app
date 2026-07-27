@@ -134,14 +134,30 @@ def _thumbnail_formatter(view, context, model, name):
     return Markup(f'<img src="{src}" style="max-height:64px;max-width:64px">')
 
 
+def _description_formatter(view, context, model, name):
+    if not model.description:
+        return ""
+    text = model.description
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
 class SubmittedImageView(_BaseView):
     column_list = [
         "id", "thumbnail_path", "endpoint", "model_name", "sha256", "width",
-        "height", "inference_time_ms", "status_code", "client_ip", "received_at",
+        "height", "description", "inference_time_ms", "status_code",
+        "client_ip", "received_at",
     ]
     column_labels = {"thumbnail_path": "Thumbnail"}
-    column_formatters = {"thumbnail_path": _thumbnail_formatter}
-    column_searchable_list = ["sha256", "client_ip"]
+    column_formatters = {
+        "thumbnail_path": _thumbnail_formatter,
+        "description": _description_formatter,
+    }
+    # Inline textarea edit straight from the list view (same x-editable
+    # pattern DatasetImageView uses for `split`) - a background-generated
+    # caption is often close but not exactly what a curator wants, and
+    # shouldn't require opening the full edit form just to tweak wording.
+    column_editable_list = ["description"]
+    column_searchable_list = ["sha256", "client_ip", "description"]
     column_filters = ["endpoint", "model_name", "status_code", "received_at"]
     column_sortable_list = ["id", "endpoint", "inference_time_ms", "received_at"]
     column_default_sort = ("received_at", True)
@@ -151,7 +167,7 @@ class SubmittedImageView(_BaseView):
     form_columns = [
         "sha256", "file_path", "width", "height", "content_type", "endpoint",
         "model_name", "client_ip", "inference_time_ms", "status_code",
-        "capture_metadata",
+        "description", "capture_metadata",
     ]
 
 

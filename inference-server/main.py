@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 
 from alpr import router as alpr_router
+from describe import enqueue_description, start_worker
 from limits import validate_body_size
 from persist import persist_submission
 from postprocess import POSTPROCESS_MAP
@@ -60,6 +61,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(alpr_router)
+
+
+@app.on_event("startup")
+async def _start_background_workers():
+    # Drains describe.py's background description queue - see its module
+    # docstring for why this runs out-of-band instead of inline with
+    # /predict.
+    start_worker()
 
 
 @app.get("/health")
@@ -114,7 +123,7 @@ async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
 
     detections = POSTPROCESS_MAP[model](output, resolution)
 
-    persist_submission(
+    submitted_image_id = persist_submission(
         image_bytes=body,
         endpoint="/predict",
         width=image.width,
@@ -131,6 +140,7 @@ async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
         capture_metadata=metadata,
         client_detections=client_detections,
     )
+    enqueue_description(submitted_image_id, body, image_content_type)
 
     return JSONResponse(
         {
