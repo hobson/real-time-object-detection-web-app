@@ -216,8 +216,13 @@ async def predict(request: Request):
         capture_metadata=metadata,
         client_detections=client_detections,
     )
-    # Not wired up for /alpr/ws below - see describe.py's module docstring
-    # on why a continuous ~1fps stream would flood the queue.
+    # /predict (this endpoint, and main.py's) can also be called many times
+    # a second by a live-detection loop - the bounded drop-on-full queue
+    # (see describe.py's module docstring) is what actually protects
+    # against that, for both. /alpr/ws below skips enqueueing entirely
+    # instead of relying on that same bounding: it's a guaranteed-continuous
+    # ~1fps stream of plate close-ups, which don't benefit from a scene
+    # caption at all, so there's nothing worth even attempting there.
     enqueue_description(submitted_image_id, body, "image/jpeg")
     return JSONResponse(result)
 

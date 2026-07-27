@@ -183,7 +183,10 @@ class SubmittedImage(Base):
     # "classes": {class_name: count}}`. The full per-detection data (boxes,
     # confidence, etc.) already lives in DetectionLabel rows below; this is
     # just a cheap denormalized summary for admin display/search without a
-    # join.
+    # join. Recomputed only at persist time and never mutated afterwards -
+    # DetectionLabelView has no column_editable_list, so there's no path
+    # that could let this drift from the rows it summarizes; don't add
+    # DetectionLabel editing without revisiting this.
     detection_metadata: Mapped[dict | None] = mapped_column(JSON)
     # Generated after the fact by describe.py's background queue (a
     # multimodal LLM call is way too slow to run inline with /predict) - an

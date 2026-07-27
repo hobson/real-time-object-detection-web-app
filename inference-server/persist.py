@@ -49,6 +49,17 @@ def _clean_exif_value(value):
     return value
 
 
+def _clean_tag_dict(items, tagset: dict) -> dict:
+    """Shared by _extract_exif's top-level and per-IFD passes: resolve each
+    tag id to its name and drop any value _clean_exif_value rejects."""
+    result = {}
+    for tag_id, value in items:
+        cleaned = _clean_exif_value(value)
+        if cleaned is not None:
+            result[tagset.get(tag_id, str(tag_id))] = cleaned
+    return result
+
+
 def _extract_exif(data: bytes) -> dict:
     """Best-effort EXIF extraction (camera make/model/focal length,
     orientation, GPS, capture timestamp) from a submitted JPEG. Returns {}
@@ -63,18 +74,11 @@ def _extract_exif(data: bytes) -> dict:
     if not exif:
         return {}
 
+    result = _clean_tag_dict(exif.items(), TAGS)
     # ExifOffset/GPSInfo at the top level are just byte offsets pointing at
     # the sub-IFDs pulled out below, not real fields.
-    _POINTER_TAGS = {"ExifOffset", "GPSInfo"}
-
-    result = {}
-    for tag_id, value in exif.items():
-        tag = TAGS.get(tag_id, str(tag_id))
-        if tag in _POINTER_TAGS:
-            continue
-        cleaned = _clean_exif_value(value)
-        if cleaned is not None:
-            result[tag] = cleaned
+    result.pop("ExifOffset", None)
+    result.pop("GPSInfo", None)
 
     for ifd_id in (IFD.Exif, IFD.GPSInfo):
         try:
@@ -82,11 +86,7 @@ def _extract_exif(data: bytes) -> dict:
         except Exception:
             continue
         tagset = GPSTAGS if ifd_id == IFD.GPSInfo else TAGS
-        sub = {}
-        for tag_id, value in ifd.items():
-            cleaned = _clean_exif_value(value)
-            if cleaned is not None:
-                sub[tagset.get(tag_id, str(tag_id))] = cleaned
+        sub = _clean_tag_dict(ifd.items(), tagset)
         if sub:
             if ifd_id == IFD.GPSInfo:
                 result["GPSInfo"] = sub
@@ -134,20 +134,26 @@ def _store_image(data: bytes, content_type: str | None) -> str:
     return sha256, str(path)
 
 
-def _store_thumbnail(data: bytes, sha256: str) -> str | None:
+def _store_thumbnail(data: bytes, sha256: str, *, image: Image.Image | None = None) -> str | None:
     """Downscale the submitted image to fit THUMBNAIL_MAX_SIZE and save it
     as a JPEG for the admin list view. Returns None (not raised) on any
     decode failure - a missing thumbnail is not worth failing the request
     or the submission over, same best-effort contract as persist_submission
-    itself."""
+    itself.
+
+    `image`, if given, is a caller-decoded Image reused instead of
+    re-decoding `data` from scratch (main.py's /predict already decodes the
+    same bytes for inference before persisting) - copied first since
+    `.thumbnail()` resizes in place and callers still need their own copy
+    afterwards."""
     THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
     path = THUMBNAIL_DIR / f"{sha256}.jpg"
     if path.exists():
         return str(path)
     try:
-        image = Image.open(io.BytesIO(data)).convert("RGB")
-        image.thumbnail(THUMBNAIL_MAX_SIZE)
-        image.save(path, format="JPEG", quality=80)
+        thumb = image.copy() if image is not None else Image.open(io.BytesIO(data)).convert("RGB")
+        thumb.thumbnail(THUMBNAIL_MAX_SIZE)
+        thumb.save(path, format="JPEG", quality=80)
         return str(path)
     except Exception:
         logger.exception("Failed to generate thumbnail for %s", sha256)
@@ -168,6 +174,7 @@ def persist_submission(
     detections: list[dict],
     capture_metadata: dict | None = None,
     client_detections: list[dict] | None = None,
+    image: Image.Image | None = None,
 ) -> int | None:
     """Persist one submitted image plus its detections. `detections` items
     may include any of: class_id, class_name, box (normalized [x0,y0,x1,y1]
@@ -191,10 +198,14 @@ def persist_submission(
     Returns the new SubmittedImage row's id, or None if persistence itself
     failed (in which case there's no row for a caller to later attach a
     background-generated description to - see describe.py).
+
+    `image` lets a caller that already decoded the bytes with PIL (main.py's
+    /predict does, for inference) pass that Image along instead of paying
+    for a second full JPEG decode inside _store_thumbnail.
     """
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
-        thumbnail_path = _store_thumbnail(image_bytes, sha256)
+        thumbnail_path = _store_thumbnail(image_bytes, sha256, image=image)
         capture_metadata = _build_capture_metadata(capture_metadata, image_bytes)
         detection_metadata = _detection_summary(detections)
         session = SessionLocal()

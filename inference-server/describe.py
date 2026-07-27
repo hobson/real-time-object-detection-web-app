@@ -108,31 +108,32 @@ def _update_description(submitted_image_id: int, description: str) -> None:
 
 def describe_and_store(
     submitted_image_id: int, image_bytes: bytes, *, content_type: str = "image/jpeg"
-) -> None:
+) -> bool:
     """Best-effort: generate + persist a description for one already-stored
-    SubmittedImage row. Never raises - the background worker calls this in
-    a thread, and a slow/failed LLM call must not crash it."""
+    SubmittedImage row. Never raises - both the background worker (in a
+    thread) and the CLI backfill below call this, and a slow/failed LLM
+    call must not crash either. Returns whether it succeeded, so callers
+    that want to report per-row status (the CLI) don't need their own
+    try/except around the same two calls."""
     try:
         description = generate_description(image_bytes, content_type=content_type)
         _update_description(submitted_image_id, description)
+        return True
     except Exception:
         logger.exception(
             "Failed to generate description for submitted_image %s", submitted_image_id
         )
+        return False
 
 
 # ---------------------------------------------------------------------------
 # Background queue (used by main.py/alpr.py) - see module docstring
 # ---------------------------------------------------------------------------
 
-_queue: asyncio.Queue | None = None
-
-
-def _get_queue() -> asyncio.Queue:
-    global _queue
-    if _queue is None:
-        _queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
-    return _queue
+# Constructing an asyncio.Queue no longer requires a running loop as of
+# Python 3.10, so this can be a plain module-level singleton instead of a
+# lazily-initialized one.
+_queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
 
 
 def enqueue_description(
@@ -144,7 +145,7 @@ def enqueue_description(
     if submitted_image_id is None:
         return
     try:
-        _get_queue().put_nowait((submitted_image_id, image_bytes, content_type or "image/jpeg"))
+        _queue.put_nowait((submitted_image_id, image_bytes, content_type or "image/jpeg"))
     except asyncio.QueueFull:
         logger.debug(
             "Description queue full, dropping submitted_image %s", submitted_image_id
@@ -152,15 +153,14 @@ def enqueue_description(
 
 
 async def _worker() -> None:
-    queue = _get_queue()
     while True:
-        submitted_image_id, image_bytes, content_type = await queue.get()
+        submitted_image_id, image_bytes, content_type = await _queue.get()
         try:
             await asyncio.to_thread(
                 describe_and_store, submitted_image_id, image_bytes, content_type=content_type
             )
         finally:
-            queue.task_done()
+            _queue.task_done()
 
 
 def start_worker() -> asyncio.Task:
@@ -193,15 +193,10 @@ def backfill_missing(limit: int | None = None) -> None:
             print(f"[{i}/{len(rows)}] submitted_image {row.id}: skipped, file missing at {path}")
             continue
         print(f"[{i}/{len(rows)}] submitted_image {row.id} ({path.name}) ...", end=" ", flush=True)
-        try:
-            description = generate_description(
-                path.read_bytes(), content_type=row.content_type or "image/jpeg"
-            )
-            _update_description(row.id, description)
-            print("ok")
-        except Exception as e:
-            print(f"failed: {e}")
-            logger.exception("Failed to generate description for submitted_image %s", row.id)
+        ok = describe_and_store(
+            row.id, path.read_bytes(), content_type=row.content_type or "image/jpeg"
+        )
+        print("ok" if ok else "failed (see log)")
 
 
 def main() -> None:

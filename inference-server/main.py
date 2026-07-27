@@ -139,6 +139,7 @@ async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
         ],
         capture_metadata=metadata,
         client_detections=client_detections,
+        image=image,
     )
     enqueue_description(submitted_image_id, body, image_content_type)
 
