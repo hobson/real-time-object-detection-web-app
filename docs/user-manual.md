@@ -86,6 +86,39 @@ curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/predict?model=yolo12n.o
 width/height (not the model's internal input resolution) — multiply by your
 image dimensions to get pixel coordinates.
 
+### Attaching capture metadata (multipart)
+
+Both `/predict` and `/alpr/predict` also accept `multipart/form-data`
+instead of a raw body, for clients that have more than just the image to
+send — an `image` file part plus an optional `metadata` JSON string part:
+
+```bash
+curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/predict" \
+  -F "image=@photo.jpg;type=image/jpeg" \
+  -F 'metadata={"gps":{"lat":37.7749,"lon":-122.4194,"accuracy":8.0},"camera_facing":"environment"}'
+```
+
+`metadata` is a free-form JSON object — nothing in it is validated beyond
+"is this a JSON object" — but the fields a client is expected to send are:
+
+| Field | Shape | Source |
+|---|---|---|
+| `gps` | `{lat, lon, altitude?, accuracy?, heading?, speed?}` | `navigator.geolocation` |
+| `orientation` | `{alpha, beta, gamma}` | `DeviceOrientationEvent` (compass heading + tilt) |
+| `acceleration` | `{x, y, z}` | `DeviceMotionEvent.acceleration` |
+| `rotation_rate` | `{alpha, beta, gamma}` | `DeviceMotionEvent.rotationRate` (gyroscope) |
+| `camera_facing` | `"user"` \| `"environment"` | which physical camera captured the frame |
+| `client_detections` | same shape as this endpoint's own `detections` response field | the client's own YOLO results, if it ran detection itself before/instead of relying on this call |
+
+Everything is optional and stored as-is (`SubmittedImage.capture_metadata`,
+a JSON column — see §2's Submitted Images detail view). `client_detections`
+specifically is pulled out and stored as `DetectionLabel` rows like any
+other detection, but with `source="client"` instead of the default
+`"server"`, so `/admin`'s Detection Labels table can tell the two apart
+(filter by `source`). None of this changes the response shape — a
+multipart request gets back exactly the same JSON either endpoint would
+return for a plain raw-body request.
+
 ### `POST /alpr/predict` — license plate detection + OCR
 
 Body is a single JPEG frame (raw bytes). No `model` param — always uses the

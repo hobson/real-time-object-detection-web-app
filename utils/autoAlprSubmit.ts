@@ -20,11 +20,20 @@ const MIN_SUBMIT_INTERVAL_MS = 5_000;
 export function useAutoAlprSubmit() {
   const lastSubmittedAt = useRef<number>(0);
 
-  return (ctx: CanvasRenderingContext2D, detectedClasses: string[]) => {
-    if (!detectedClasses.some((c) => TRIGGER_CLASSES.has(c))) return;
+  // `force`: bypass both the trigger-class check and the rate limit - set
+  // by the explicit "Capture Photo" button (see ObjectDetectionCamera's
+  // isSingleCapture), which should always reach the server since the user
+  // deliberately asked for that one frame, unlike the opportunistic
+  // best-effort sampling live detection does on every frame.
+  return (
+    ctx: CanvasRenderingContext2D,
+    detectedClasses: string[],
+    force = false
+  ) => {
+    if (!force && !detectedClasses.some((c) => TRIGGER_CLASSES.has(c))) return;
 
     const now = Date.now();
-    if (now - lastSubmittedAt.current < MIN_SUBMIT_INTERVAL_MS) return;
+    if (!force && now - lastSubmittedAt.current < MIN_SUBMIT_INTERVAL_MS) return;
     lastSubmittedAt.current = now;
 
     ctx.canvas.toBlob(

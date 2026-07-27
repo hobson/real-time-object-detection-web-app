@@ -39,11 +39,21 @@ def persist_submission(
     inference_time_ms: float | None = None,
     status_code: int | None = None,
     detections: list[dict],
+    capture_metadata: dict | None = None,
+    client_detections: list[dict] | None = None,
 ) -> None:
     """Persist one submitted image plus its detections. `detections` items
     may include any of: class_id, class_name, box (normalized [x0,y0,x1,y1]
     or a (x_center,y_center,width,height) tuple already normalized),
     confidence, plate_text, ocr_confidence, region, region_confidence.
+
+    `capture_metadata` is the opportunistic GPS/orientation/acceleration/
+    camera-facing blob a multipart caller may have attached (see
+    request_parsing.py) - stored as-is, `None` for the plain-raw-body
+    request shape. `client_detections` is that same caller's own detection
+    payload (e.g. it already ran in-browser YOLO) - same shape as
+    `detections`, persisted as DetectionLabel rows with `source="client"`
+    instead of the default `"server"`, so the two can be told apart later.
     """
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
@@ -60,34 +70,40 @@ def persist_submission(
                 client_ip=client_ip,
                 inference_time_ms=inference_time_ms,
                 status_code=status_code,
+                capture_metadata=capture_metadata,
             )
             session.add(submitted)
             session.flush()
 
             for det in detections:
-                x_center, y_center, box_width, box_height = _to_center_wh(det["box"])
-                session.add(
-                    DetectionLabel(
-                        submitted_image_id=submitted.id,
-                        class_id=det.get("class_id"),
-                        class_name=det.get("class_name"),
-                        x_center=x_center,
-                        y_center=y_center,
-                        width=box_width,
-                        height=box_height,
-                        confidence=det.get("confidence"),
-                        model_name=model_name,
-                        plate_text=det.get("plate_text"),
-                        ocr_confidence=det.get("ocr_confidence"),
-                        region=det.get("region"),
-                        region_confidence=det.get("region_confidence"),
-                    )
-                )
+                session.add(_detection_label(submitted.id, det, model_name, source="server"))
+            for det in client_detections or []:
+                session.add(_detection_label(submitted.id, det, model_name, source="client"))
             session.commit()
         finally:
             session.close()
     except Exception:
         logger.exception("Failed to persist submission for endpoint %s", endpoint)
+
+
+def _detection_label(submitted_image_id: int, det: dict, model_name: str | None, *, source: str) -> DetectionLabel:
+    x_center, y_center, box_width, box_height = _to_center_wh(det["box"])
+    return DetectionLabel(
+        submitted_image_id=submitted_image_id,
+        class_id=det.get("class_id"),
+        class_name=det.get("class_name") or det.get("class"),
+        x_center=x_center,
+        y_center=y_center,
+        width=box_width,
+        height=box_height,
+        confidence=det.get("confidence"),
+        model_name=det.get("model_name") or model_name,
+        plate_text=det.get("plate_text"),
+        ocr_confidence=det.get("ocr_confidence"),
+        region=det.get("region"),
+        region_confidence=det.get("region_confidence"),
+        source=source,
+    )
 
 
 def _to_center_wh(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:

@@ -134,25 +134,28 @@ class SubmittedImageView(_BaseView):
     column_filters = ["endpoint", "model_name", "status_code", "received_at"]
     column_sortable_list = ["id", "endpoint", "inference_time_ms", "received_at"]
     column_default_sort = ("received_at", True)
-    column_exclude_list = ["file_path", "content_type"]
+    # capture_metadata is a JSON blob (GPS/orientation/acceleration/camera-
+    # facing) - too bulky for the list view, kept in the per-row form below.
+    column_exclude_list = ["file_path", "content_type", "capture_metadata"]
     form_columns = [
         "sha256", "file_path", "width", "height", "content_type", "endpoint",
         "model_name", "client_ip", "inference_time_ms", "status_code",
+        "capture_metadata",
     ]
 
 
 class DetectionLabelView(_BaseView):
     column_list = [
-        "id", "submitted_image", "class_name", "confidence", "plate_text",
-        "ocr_confidence", "region", "model_name",
+        "id", "submitted_image", "class_name", "confidence", "source",
+        "plate_text", "ocr_confidence", "region", "model_name",
     ]
     column_searchable_list = ["class_name", "plate_text", "model_name"]
-    column_filters = ["class_name", "model_name", "region"]
+    column_filters = ["class_name", "model_name", "region", "source"]
     column_sortable_list = ["id", "confidence", "ocr_confidence"]
     column_default_sort = ("id", False)
     form_columns = [
         "submitted_image", "class_id", "class_name", "x_center", "y_center",
-        "width", "height", "confidence", "model_name", "plate_text",
+        "width", "height", "confidence", "model_name", "source", "plate_text",
         "ocr_confidence", "region", "region_confidence",
     ]
 

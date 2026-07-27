@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
@@ -21,6 +21,7 @@ from alpr import router as alpr_router
 from limits import validate_body_size
 from persist import persist_submission
 from postprocess import POSTPROCESS_MAP
+from request_parsing import parse_image_and_metadata
 
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", Path(__file__).parent.parent / "models"))
 
@@ -72,15 +73,27 @@ def models():
 
 
 @app.post("/predict")
-async def predict(
-    request: Request,
-    model: str = Query(DEFAULT_MODEL),
-    body: bytes = Body(..., media_type="image/jpeg"),
-):
+async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
+    """Run general object detection on one image.
+
+    **Request body** - either:
+    - raw JPEG/PNG bytes (`Content-Type: image/jpeg`), the original
+      contract, e.g. `curl --data-binary @photo.jpg -H "Content-Type:
+      image/jpeg" ".../predict"`; or
+    - `multipart/form-data` with an `image` file part and an optional
+      `metadata` JSON string part carrying GPS/device-orientation/
+      acceleration/camera-facing data and/or the client's own YOLO
+      detections (key `client_detections`, same shape as this endpoint's
+      own `detections` response field) - see docs/user-manual.md.
+
+    Both shapes return the same JSON response.
+    """
     if model not in RES_TO_MODEL:
         raise HTTPException(status_code=400, detail=f"Unknown model {model}")
 
+    body, metadata, image_content_type = await parse_image_and_metadata(request)
     validate_body_size(body)
+    client_detections = metadata.pop("client_detections", None) if metadata else None
 
     try:
         image = Image.open(io.BytesIO(body)).convert("RGB")
@@ -106,7 +119,7 @@ async def predict(
         endpoint="/predict",
         width=image.width,
         height=image.height,
-        content_type=request.headers.get("content-type"),
+        content_type=image_content_type,
         model_name=model,
         client_ip=request.client.host if request.client else None,
         inference_time_ms=inference_ms,
@@ -115,6 +128,8 @@ async def predict(
             {"class_name": d["class"], "confidence": d["confidence"], "box": d["box"]}
             for d in detections
         ],
+        capture_metadata=metadata,
+        client_detections=client_detections,
     )
 
     return JSONResponse(

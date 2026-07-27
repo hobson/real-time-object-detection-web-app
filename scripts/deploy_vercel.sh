@@ -8,9 +8,9 @@
 # see .vercelignore's comments for the size tradeoff that implies).
 #
 # Not run automatically - review the plan below, then run this yourself:
-#   ./deploy_vercel.sh
+#   ./scripts/deploy_vercel.sh
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # Sanity-check the build locally first (catches type errors / build
 # failures before spending a Vercel build minute on them).

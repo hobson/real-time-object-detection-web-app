@@ -10,6 +10,11 @@ import { runModelUtils } from '../../utils';
 import { useNotifyDetection } from '../../utils/notify';
 import { useAutoAlprSubmit } from '../../utils/autoAlprSubmit';
 
+// Detections below this score are treated as noise, not just visually
+// suppressed - they're excluded from notifications/auto-ALPR-submit too
+// (see the onDetections callers), not only from the drawn boxes.
+const MIN_CONFIDENCE = 0.5;
+
 const RES_TO_MODEL: [number[], string][] = [
   [[256, 256], 'yolo12n.onnx'],
   [[256, 256], 'yolo11n.onnx'],
@@ -256,7 +261,8 @@ const Yolo = (props: any) => {
     tensor: Tensor,
     inferenceTime: number,
     ctx: CanvasRenderingContext2D,
-    modelName: string
+    modelName: string,
+    isSingleCapture: boolean
   ) => {
     // Output tensor of yolov7-tiny is [det_num, 7]
     // while yolov10n/yolo11n/yolo12n are [1, 300, 6] - the yolo11/12 .onnx
@@ -271,18 +277,21 @@ const Yolo = (props: any) => {
       console.log('Using postprocess for', modelName);
       postprocessMap[modelName](ctx, modelResolution, tensor, conf2color, (detectedClasses) => {
         notifyDetection(ctx, detectedClasses);
-        autoAlprSubmit(ctx, detectedClasses);
+        autoAlprSubmit(ctx, detectedClasses, isSingleCapture);
       });
     }
   };
 
-  const detect = async (ctx: CanvasRenderingContext2D): Promise<number> => {
+  const detect = async (
+    ctx: CanvasRenderingContext2D,
+    opts: { isSingleCapture: boolean }
+  ): Promise<number> => {
     const data = preprocess(ctx);
     const [outputTensor, inferenceTime] = await runModelUtils.runModel(
       session,
       data
     );
-    await postprocess(outputTensor, inferenceTime, ctx, modelName);
+    await postprocess(outputTensor, inferenceTime, ctx, modelName, opts.isSingleCapture);
     return inferenceTime;
   };
 
@@ -333,7 +342,8 @@ const postprocessYolov10: PostprocessFunction = (
   // console.log(tensor.dims);
   for (let i = 0; i < tensor.dims[1]; i += 6) {
     [x0, y0, x1, y1, score, cls_id] = tensor.data.slice(i, i + 6);
-    if ((score as any) < 0.25) {
+    if ((score as any) < MIN_CONFIDENCE) {
+      // pre-sorted descending, so nothing further can pass either
       break;
     }
     detectedClasses.push(yoloClasses[cls_id as any]);
@@ -390,6 +400,11 @@ const postprocessYolov7: PostprocessFunction = (
       i * 7,
       i * 7 + 7
     );
+    if ((score as any) < MIN_CONFIDENCE) {
+      // not guaranteed sorted (unlike postprocessYolov10), so skip rather
+      // than break
+      continue;
+    }
     detectedClasses.push(yoloClasses[cls_id as any]);
 
     // scale to canvas size

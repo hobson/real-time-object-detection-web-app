@@ -48,28 +48,52 @@ times, or switching to a better connection, usually resolves it.
 
 Once ready, the buttons switch to their normal labels and are enabled.
 
-## 4. Pick a mode: In-browser vs Server-side
+## 4. Pick a mode
 
-Two buttons at the top of the page switch between them:
+Four buttons at the top of the page switch between them:
 
 - **In-browser (WASM)** — the default. Inference runs entirely on your
   phone; nothing about what your camera sees ever leaves the device
-  (except captured/notified frames, see §5). Slower to start (has to
+  (except captured/notified frames, see §5-6). Slower to start (has to
   download the model first, once per session) but works even if the
-  server is temporarily unreachable, once loaded.
+  server is temporarily unreachable, once loaded. A car or person in
+  frame also opportunistically forwards that frame to the server's
+  license-plate detector in the background (rate-limited to once every
+  5s) — see [`user-manual.md`](./user-manual.md) for what gets recorded.
 - **Server-side** — your phone just captures and uploads a JPEG frame per
   detection; a server does the actual inference and sends back the
   results. Starts almost instantly (just checks the server is reachable,
   no big download) and tends to run smoother frame-to-frame, at the cost
   of every analyzed frame being sent to the server.
+- **License plates (server, ~1 fps)** — detects and reads license plates
+  instead of the 80 everyday object classes, via a persistent connection
+  to the server (see `alpr.py`'s module docstring for why this one uses a
+  WebSocket instead of one request per frame). Deliberately capped
+  around 1 fps — reading text is slower than plain detection, and there's
+  no benefit to reading the same plate faster than once a second.
+- **Full-res stream (server, 1-6 fps)** — like Server-side, but uploads
+  the camera's full native resolution (not shrunk to fit the screen) and
+  self-paces between 1 and 6 fps based on how fast your connection and
+  the server can actually keep up, rather than a fixed rate. Useful when
+  you specifically want the server's copy of the image to be as
+  detailed as possible (e.g. for later curation/review in `/admin`), at
+  the cost of a much bigger upload per frame.
 
 Switching modes re-triggers the loading step in §3 for whichever mode you
 switched to.
 
 ## 5. Detect objects
 
+Only detections the model is at least 50% confident in get a box drawn —
+a dimmer, unlabeled shape in the scene that the model isn't sure about is
+expected to just not show a box, not a bug.
+
 - **Capture Photo** — takes a single snapshot, runs detection once, and
-  draws labeled boxes on it.
+  draws labeled boxes on it. In In-browser mode this snapshot is always
+  forwarded to the server's license-plate detector too, regardless of
+  what was detected — unlike Live Detection's opportunistic car/person-
+  triggered background upload (§4), a deliberate single capture always
+  gets sent.
 - **Live Detection** — runs detection continuously (each frame, roughly
   30 times/second) until you tap it again to stop. Best used with the
   phone propped up rather than handheld, since detection quality depends

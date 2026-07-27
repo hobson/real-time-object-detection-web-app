@@ -5,7 +5,10 @@ import numpy as np
 
 from yolo_classes import YOLO_CLASSES
 
-CONFIDENCE_THRESHOLD = 0.25
+# Detections below this score are dropped entirely (not returned to the
+# client at all) - kept in sync with MIN_CONFIDENCE in components/models/
+# Yolo.tsx so client-side and server-side detection behavior matches.
+CONFIDENCE_THRESHOLD = 0.5
 
 
 def _to_result(class_id, confidence, box, model_resolution):
@@ -26,10 +29,15 @@ def _to_result(class_id, confidence, box, model_resolution):
 
 
 def postprocess_yolov7(output: np.ndarray, model_resolution):
-    # [det_num, 7]: batch_id, x0, y0, x1, y1, cls_id, score - already NMS'd
+    # [det_num, 7]: batch_id, x0, y0, x1, y1, cls_id, score - already NMS'd,
+    # but NMS doesn't guarantee a minimum score, and output isn't
+    # necessarily sorted, so filter rather than break (matches the client's
+    # postprocessYolov7 continue-not-break).
     results = []
     for row in output:
         _, x0, y0, x1, y1, cls_id, score = row
+        if score < CONFIDENCE_THRESHOLD:
+            continue
         results.append(
             _to_result(int(cls_id), score, (x0, y0, x1, y1), model_resolution)
         )

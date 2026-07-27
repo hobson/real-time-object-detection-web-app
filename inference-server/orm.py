@@ -27,7 +27,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
-    DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String,
+    JSON, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String,
     UniqueConstraint, create_engine, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -148,6 +148,13 @@ class SubmittedImage(Base):
     client_ip: Mapped[str | None] = mapped_column(String(64))
     inference_time_ms: Mapped[float | None] = mapped_column(Float)
     status_code: Mapped[int | None] = mapped_column(Integer)
+    # Opportunistic capture context sent alongside the image over multipart
+    # (GPS, device orientation/acceleration, which camera - see
+    # request_parsing.py) - a single flexible JSON blob rather than a column
+    # per sensor field, since this server has no migration tooling (see
+    # curation.py's module docstring) and the exact fields a client sends
+    # will keep evolving. Null for the plain-raw-body request shape.
+    capture_metadata: Mapped[dict | None] = mapped_column(JSON)
     received_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -161,7 +168,9 @@ class SubmittedImage(Base):
 
 
 class DetectionLabel(Base):
-    """One row per detection an endpoint returned for a `SubmittedImage`.
+    """One row per detection an endpoint returned for a `SubmittedImage`,
+    OR per detection a client attached to its own upload (`source`
+    distinguishes the two - see request_parsing.py's `client_detections`).
 
     OCR fields (`plate_text`, `ocr_confidence`, `region`,
     `region_confidence`) are populated only by `/alpr/predict`/`/alpr/ws`
@@ -187,6 +196,13 @@ class DetectionLabel(Base):
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
     region: Mapped[str | None] = mapped_column(String(16))
     region_confidence: Mapped[float | None] = mapped_column(Float)
+    # "server" (default) for detections this server itself computed,
+    # "client" for a detection payload the caller attached to its own
+    # multipart upload (e.g. a phone that already ran in-browser YOLO and
+    # wants both its own and the server's results recorded side by side).
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="server", server_default="server"
+    )
 
     submitted_image: Mapped[SubmittedImage] = relationship(
         "SubmittedImage", back_populates="detections"
