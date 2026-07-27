@@ -6,8 +6,11 @@ persistence is a side channel for later curation, not part of the inference
 contract, and must never turn a successful inference into a failed request.
 """
 import hashlib
+import io
 import logging
 from pathlib import Path
+
+from PIL import Image
 
 from orm import DetectionLabel, SubmittedImage
 from db import SessionLocal
@@ -15,6 +18,8 @@ from db import SessionLocal
 logger = logging.getLogger("persist")
 
 STORAGE_DIR = Path(__file__).parent / "storage" / "images"
+THUMBNAIL_DIR = Path(__file__).parent / "storage" / "thumbnails"
+THUMBNAIL_MAX_SIZE = (128, 128)
 
 
 def _store_image(data: bytes, content_type: str | None) -> str:
@@ -25,6 +30,26 @@ def _store_image(data: bytes, content_type: str | None) -> str:
     if not path.exists():
         path.write_bytes(data)
     return sha256, str(path)
+
+
+def _store_thumbnail(data: bytes, sha256: str) -> str | None:
+    """Downscale the submitted image to fit THUMBNAIL_MAX_SIZE and save it
+    as a JPEG for the admin list view. Returns None (not raised) on any
+    decode failure - a missing thumbnail is not worth failing the request
+    or the submission over, same best-effort contract as persist_submission
+    itself."""
+    THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
+    path = THUMBNAIL_DIR / f"{sha256}.jpg"
+    if path.exists():
+        return str(path)
+    try:
+        image = Image.open(io.BytesIO(data)).convert("RGB")
+        image.thumbnail(THUMBNAIL_MAX_SIZE)
+        image.save(path, format="JPEG", quality=80)
+        return str(path)
+    except Exception:
+        logger.exception("Failed to generate thumbnail for %s", sha256)
+        return None
 
 
 def persist_submission(
@@ -57,11 +82,13 @@ def persist_submission(
     """
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
+        thumbnail_path = _store_thumbnail(image_bytes, sha256)
         session = SessionLocal()
         try:
             submitted = SubmittedImage(
                 sha256=sha256,
                 file_path=file_path,
+                thumbnail_path=thumbnail_path,
                 width=width,
                 height=height,
                 content_type=content_type,

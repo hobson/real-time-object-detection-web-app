@@ -140,6 +140,12 @@ class SubmittedImage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Small (max 128px) JPEG rendered from the full image at capture time
+    # (see persist.py's _store_image) - lets the admin list view show a
+    # preview without decoding the full-resolution original per row. Null
+    # for images stored before this column existed, or if thumbnailing
+    # failed (e.g. Pillow couldn't decode the bytes).
+    thumbnail_path: Mapped[str | None] = mapped_column(String(1024))
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     content_type: Mapped[str | None] = mapped_column(String(64))

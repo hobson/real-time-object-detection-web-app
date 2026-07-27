@@ -29,9 +29,10 @@ scp inference-server/main.py inference-server/alpr.py \
     inference-server/orm.py inference-server/postprocess.py \
     inference-server/request_parsing.py \
     inference-server/migrate_2026_07_26_capture_metadata.py \
+    inference-server/migrate_2026_07_27_thumbnail.py \
     "taco:${REMOTE_DIR}/"
 
-ssh taco "cd ${REMOTE_DIR} && .venv/bin/python migrate_2026_07_26_capture_metadata.py"
+ssh taco "cd ${REMOTE_DIR} && .venv/bin/python migrate_2026_07_26_capture_metadata.py && .venv/bin/python migrate_2026_07_27_thumbnail.py"
 
 # The FastAPI process caches loaded state in memory, and gunicorn workers
 # don't pick up source changes without a restart - see docs/user-manual.md

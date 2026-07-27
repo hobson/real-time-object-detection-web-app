@@ -30,16 +30,18 @@ column_editable_list
 """
 from functools import cached_property
 
-from flask import Flask, redirect, url_for
+from flask import Flask, redirect, send_from_directory, url_for
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
 from flask_sqlalchemy import SQLAlchemy
+from markupsafe import Markup
 
 from orm import (
     Base, Dataset, DatasetClass, DatasetImage, DatasetLabel,
     DetectionLabel, SubmittedImage,
 )
+from persist import THUMBNAIL_DIR
 
 import os
 
@@ -125,11 +127,20 @@ class DatasetLabelView(_BaseView):
 # Endpoint logging views
 # ---------------------------------------------------------------------------
 
+def _thumbnail_formatter(view, context, model, name):
+    if not model.thumbnail_path:
+        return ""
+    src = url_for("thumbnail_file", filename=f"{model.sha256}.jpg")
+    return Markup(f'<img src="{src}" style="max-height:64px;max-width:64px">')
+
+
 class SubmittedImageView(_BaseView):
     column_list = [
-        "id", "endpoint", "model_name", "sha256", "width", "height",
-        "inference_time_ms", "status_code", "client_ip", "received_at",
+        "id", "thumbnail_path", "endpoint", "model_name", "sha256", "width",
+        "height", "inference_time_ms", "status_code", "client_ip", "received_at",
     ]
+    column_labels = {"thumbnail_path": "Thumbnail"}
+    column_formatters = {"thumbnail_path": _thumbnail_formatter}
     column_searchable_list = ["sha256", "client_ip"]
     column_filters = ["endpoint", "model_name", "status_code", "received_at"]
     column_sortable_list = ["id", "endpoint", "inference_time_ms", "received_at"]
@@ -189,6 +200,10 @@ def create_app(db_url: str | None = None) -> Flask:
     root_path = os.environ.get("ADMIN_ROOT_PATH", "")
     if root_path:
         app.wsgi_app = _RootPathMiddleware(app.wsgi_app, root_path)
+
+    @app.route("/thumbnails/<path:filename>")
+    def thumbnail_file(filename):
+        return send_from_directory(THUMBNAIL_DIR, filename)
 
     # Tables are created once via `python orm.py` (see docs/user-manual.md
     # §3), not here - this avoids every gunicorn worker re-running DDL
