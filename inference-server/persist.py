@@ -8,9 +8,13 @@ contract, and must never turn a successful inference into a failed request.
 import hashlib
 import io
 import logging
+import platform
+import socket
+from collections import Counter
 from pathlib import Path
 
 from PIL import Image
+from PIL.ExifTags import GPSTAGS, IFD, TAGS
 
 from orm import DetectionLabel, SubmittedImage
 from db import SessionLocal
@@ -20,6 +24,104 @@ logger = logging.getLogger("persist")
 STORAGE_DIR = Path(__file__).parent / "storage" / "images"
 THUMBNAIL_DIR = Path(__file__).parent / "storage" / "thumbnails"
 THUMBNAIL_MAX_SIZE = (128, 128)
+
+# Static for the process lifetime - which machine ran inference, for
+# capture_metadata's "server_host" key (see _build_capture_metadata). Useful
+# once this server runs on more than one host, or under more than one
+# execution provider.
+_HOST_INFO = {"hostname": socket.gethostname(), "platform": platform.platform()}
+
+
+def _clean_exif_value(value):
+    """EXIF values come back as a grab-bag of PIL-specific types (raw bytes
+    for MakerNote-style blobs, IFDRational for things like FocalLength) that
+    aren't JSON-serializable as-is. Returns None for anything not worth
+    keeping (raw bytes, empty strings)."""
+    if isinstance(value, bytes):
+        return None
+    if isinstance(value, tuple):
+        cleaned = [_clean_exif_value(v) for v in value]
+        return cleaned if any(v is not None for v in cleaned) else None
+    if isinstance(value, str):
+        return value.strip("\x00 ") or None
+    if hasattr(value, "numerator") and hasattr(value, "denominator"):
+        return float(value) if value.denominator else None
+    return value
+
+
+def _extract_exif(data: bytes) -> dict:
+    """Best-effort EXIF extraction (camera make/model/focal length,
+    orientation, GPS, capture timestamp) from a submitted JPEG. Returns {}
+    for images with no EXIF - which is the common case for this app's own
+    webcam capture path (a <canvas> frame from getUserMedia carries no
+    camera metadata at all), but a real photo uploaded directly (e.g. via
+    curl or the Swagger UI file picker) usually does."""
+    try:
+        exif = Image.open(io.BytesIO(data)).getexif()
+    except Exception:
+        return {}
+    if not exif:
+        return {}
+
+    # ExifOffset/GPSInfo at the top level are just byte offsets pointing at
+    # the sub-IFDs pulled out below, not real fields.
+    _POINTER_TAGS = {"ExifOffset", "GPSInfo"}
+
+    result = {}
+    for tag_id, value in exif.items():
+        tag = TAGS.get(tag_id, str(tag_id))
+        if tag in _POINTER_TAGS:
+            continue
+        cleaned = _clean_exif_value(value)
+        if cleaned is not None:
+            result[tag] = cleaned
+
+    for ifd_id in (IFD.Exif, IFD.GPSInfo):
+        try:
+            ifd = exif.get_ifd(ifd_id)
+        except Exception:
+            continue
+        tagset = GPSTAGS if ifd_id == IFD.GPSInfo else TAGS
+        sub = {}
+        for tag_id, value in ifd.items():
+            cleaned = _clean_exif_value(value)
+            if cleaned is not None:
+                sub[tagset.get(tag_id, str(tag_id))] = cleaned
+        if sub:
+            if ifd_id == IFD.GPSInfo:
+                result["GPSInfo"] = sub
+            else:
+                result.update(sub)
+
+    return result
+
+
+def _detection_summary(detections: list[dict]) -> dict:
+    classes = Counter(
+        d.get("class_name") or d.get("class")
+        for d in detections
+        if d.get("class_name") or d.get("class")
+    )
+    return {"count": len(detections), "classes": dict(classes)}
+
+
+def _build_capture_metadata(
+    client_metadata: dict | None, image_bytes: bytes, detections: list[dict]
+) -> dict:
+    """capture_metadata used to be populated only from client-supplied GPS/
+    orientation data (see request_parsing.py) - which no shipped client
+    actually sends, so the column was always empty in practice. Fill it
+    server-side instead with whatever we can determine ourselves: EXIF
+    pulled from the image bytes, which host ran inference, and a summary of
+    what was detected - so the field is never empty for a fresh submission,
+    regardless of what (if anything) the caller attached."""
+    metadata = dict(client_metadata or {})
+    exif = _extract_exif(image_bytes)
+    if exif:
+        metadata["exif"] = exif
+    metadata["server_host"] = _HOST_INFO
+    metadata["detection_summary"] = _detection_summary(detections)
+    return metadata
 
 
 def _store_image(data: bytes, content_type: str | None) -> str:
@@ -74,15 +176,19 @@ def persist_submission(
 
     `capture_metadata` is the opportunistic GPS/orientation/acceleration/
     camera-facing blob a multipart caller may have attached (see
-    request_parsing.py) - stored as-is, `None` for the plain-raw-body
-    request shape. `client_detections` is that same caller's own detection
-    payload (e.g. it already ran in-browser YOLO) - same shape as
-    `detections`, persisted as DetectionLabel rows with `source="client"`
-    instead of the default `"server"`, so the two can be told apart later.
+    request_parsing.py) - merged (not replaced) with server-derived data
+    added by `_build_capture_metadata`: EXIF pulled from the image bytes
+    (camera make/model/focal length/GPS, when present), which host ran
+    inference, and a summary of what was detected. `client_detections` is
+    that same caller's own detection payload (e.g. it already ran
+    in-browser YOLO) - same shape as `detections`, persisted as
+    DetectionLabel rows with `source="client"` instead of the default
+    `"server"`, so the two can be told apart later.
     """
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
         thumbnail_path = _store_thumbnail(image_bytes, sha256)
+        capture_metadata = _build_capture_metadata(capture_metadata, image_bytes, detections)
         session = SessionLocal()
         try:
             submitted = SubmittedImage(

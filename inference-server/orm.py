@@ -154,12 +154,15 @@ class SubmittedImage(Base):
     client_ip: Mapped[str | None] = mapped_column(String(64))
     inference_time_ms: Mapped[float | None] = mapped_column(Float)
     status_code: Mapped[int | None] = mapped_column(Integer)
-    # Opportunistic capture context sent alongside the image over multipart
-    # (GPS, device orientation/acceleration, which camera - see
-    # request_parsing.py) - a single flexible JSON blob rather than a column
-    # per sensor field, since this server has no migration tooling (see
-    # curation.py's module docstring) and the exact fields a client sends
-    # will keep evolving. Null for the plain-raw-body request shape.
+    # Capture context: any client-supplied GPS/orientation/acceleration/
+    # camera-facing data sent alongside the image over multipart (see
+    # request_parsing.py), merged with server-derived data added by
+    # persist.py's _build_capture_metadata - EXIF pulled from the image
+    # bytes (camera make/model/focal length/GPS, when present), which host
+    # ran inference, and a summary of what was detected. A single flexible
+    # JSON blob rather than a column per field, since this server has no
+    # migration tooling (see curation.py's module docstring) and the exact
+    # fields keep evolving.
     capture_metadata: Mapped[dict | None] = mapped_column(JSON)
     received_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
