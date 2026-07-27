@@ -51,7 +51,7 @@ from fast_plate_ocr.inference.hub import OcrModel
 from fast_alpr import ALPR
 from limits import MAX_UPLOAD_BYTES, validate_body_size
 from persist import persist_submission
-from request_parsing import parse_image_and_metadata
+from request_parsing import IMAGE_UPLOAD_OPENAPI_EXTRA, parse_image_and_metadata
 
 logger = logging.getLogger("alpr")
 
@@ -162,7 +162,7 @@ def health():
     return {"status": "ok"}
 
 
-@router.post("/predict")
+@router.post("/predict", openapi_extra=IMAGE_UPLOAD_OPENAPI_EXTRA)
 async def predict(request: Request):
     """Detect and OCR license plates in a single image.
 

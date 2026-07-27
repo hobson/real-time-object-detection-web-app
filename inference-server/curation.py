@@ -177,7 +177,13 @@ def create_app(db_url: str | None = None) -> Flask:
 
     app = Flask(__name__, static_folder="curation_static", static_url_path="/static")
     app.config["SECRET_KEY"] = FLASK_SECRET
-    app.config["SQLALCHEMY_DATABASE_URI"] = db_url or str(engine_from_env().url)
+    # NOT str(url) - SQLAlchemy's URL.__str__ always masks the password as
+    # the literal text "***" (for safe logging), which would make this the
+    # actual connection password and fail auth for any DB that isn't
+    # trust/peer-authenticated.
+    app.config["SQLALCHEMY_DATABASE_URI"] = (
+        db_url or engine_from_env().url.render_as_string(hide_password=False)
+    )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     root_path = os.environ.get("ADMIN_ROOT_PATH", "")

@@ -19,6 +19,43 @@ import json
 
 from fastapi import HTTPException, Request
 
+# Neither `predict()` route declares a `Body`/`File` parameter (they parse
+# the request manually below, since FastAPI can't express "raw bytes OR
+# multipart, depending on Content-Type" via parameter declarations alone -
+# see the module docstring). But Swagger's "Try it out" file-upload widget
+# is generated purely from the OpenAPI schema, which is itself generated
+# purely from declared parameters - with none declared, "Try it out" would
+# offer no way to attach a file at all, silently sending an empty request.
+# `openapi_extra` injects this requestBody by hand so the docs page still
+# offers both shapes to test against, without changing how the route
+# actually parses a real request.
+IMAGE_UPLOAD_OPENAPI_EXTRA = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "image/jpeg": {"schema": {"type": "string", "format": "binary"}},
+            "image/png": {"schema": {"type": "string", "format": "binary"}},
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "image": {"type": "string", "format": "binary"},
+                        "metadata": {
+                            "type": "string",
+                            "description": (
+                                "Optional JSON object: gps/orientation/"
+                                "acceleration/rotation_rate/camera_facing/"
+                                "client_detections - see docs/user-manual.md."
+                            ),
+                        },
+                    },
+                    "required": ["image"],
+                }
+            },
+        },
+    }
+}
+
 
 async def parse_image_and_metadata(request: Request) -> tuple[bytes, dict | None, str | None]:
     """Returns (image_bytes, metadata, image_content_type). For a raw body,

@@ -21,7 +21,7 @@ from alpr import router as alpr_router
 from limits import validate_body_size
 from persist import persist_submission
 from postprocess import POSTPROCESS_MAP
-from request_parsing import parse_image_and_metadata
+from request_parsing import IMAGE_UPLOAD_OPENAPI_EXTRA, parse_image_and_metadata
 
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", Path(__file__).parent.parent / "models"))
 
@@ -72,7 +72,7 @@ def models():
     return {"models": list(RES_TO_MODEL.keys()), "default": DEFAULT_MODEL}
 
 
-@app.post("/predict")
+@app.post("/predict", openapi_extra=IMAGE_UPLOAD_OPENAPI_EXTRA)
 async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
     """Run general object detection on one image.
 
