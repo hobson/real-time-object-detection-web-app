@@ -105,22 +105,22 @@ def _detection_summary(detections: list[dict]) -> dict:
     return {"count": len(detections), "classes": dict(classes)}
 
 
-def _build_capture_metadata(
-    client_metadata: dict | None, image_bytes: bytes, detections: list[dict]
-) -> dict:
+def _build_capture_metadata(client_metadata: dict | None, image_bytes: bytes) -> dict:
     """capture_metadata used to be populated only from client-supplied GPS/
     orientation data (see request_parsing.py) - which no shipped client
     actually sends, so the column was always empty in practice. Fill it
     server-side instead with whatever we can determine ourselves: EXIF
-    pulled from the image bytes, which host ran inference, and a summary of
-    what was detected - so the field is never empty for a fresh submission,
-    regardless of what (if anything) the caller attached."""
+    pulled from the image bytes and which host ran inference - so the field
+    is never empty for a fresh submission, regardless of what (if anything)
+    the caller attached. Kept separate from detection_metadata (see
+    _detection_summary) - one is about the capture device/environment, the
+    other about what the model found; conflating them made either one
+    harder to query."""
     metadata = dict(client_metadata or {})
     exif = _extract_exif(image_bytes)
     if exif:
         metadata["exif"] = exif
     metadata["server_host"] = _HOST_INFO
-    metadata["detection_summary"] = _detection_summary(detections)
     return metadata
 
 
@@ -174,16 +174,19 @@ def persist_submission(
     or a (x_center,y_center,width,height) tuple already normalized),
     confidence, plate_text, ocr_confidence, region, region_confidence.
 
-    `capture_metadata` is the opportunistic GPS/orientation/acceleration/
-    camera-facing blob a multipart caller may have attached (see
-    request_parsing.py) - merged (not replaced) with server-derived data
-    added by `_build_capture_metadata`: EXIF pulled from the image bytes
-    (camera make/model/focal length/GPS, when present), which host ran
-    inference, and a summary of what was detected. `client_detections` is
-    that same caller's own detection payload (e.g. it already ran
-    in-browser YOLO) - same shape as `detections`, persisted as
-    DetectionLabel rows with `source="client"` instead of the default
-    `"server"`, so the two can be told apart later.
+    `capture_metadata` is about the capture device/environment: the
+    opportunistic GPS/orientation/acceleration/camera-facing blob a
+    multipart caller may have attached (see request_parsing.py), merged
+    (not replaced) with server-derived data added by
+    `_build_capture_metadata` - EXIF pulled from the image bytes (camera
+    make/model/focal length/GPS, when present) and which host ran
+    inference. `detection_metadata` is the separate, model-output side of
+    things - a summary of what was detected (see `_detection_summary`) -
+    kept in its own column so querying/indexing one doesn't drag in the
+    other. `client_detections` is that same caller's own detection payload
+    (e.g. it already ran in-browser YOLO) - same shape as `detections`,
+    persisted as DetectionLabel rows with `source="client"` instead of the
+    default `"server"`, so the two can be told apart later.
 
     Returns the new SubmittedImage row's id, or None if persistence itself
     failed (in which case there's no row for a caller to later attach a
@@ -192,7 +195,8 @@ def persist_submission(
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
         thumbnail_path = _store_thumbnail(image_bytes, sha256)
-        capture_metadata = _build_capture_metadata(capture_metadata, image_bytes, detections)
+        capture_metadata = _build_capture_metadata(capture_metadata, image_bytes)
+        detection_metadata = _detection_summary(detections)
         session = SessionLocal()
         try:
             submitted = SubmittedImage(
@@ -208,6 +212,7 @@ def persist_submission(
                 inference_time_ms=inference_time_ms,
                 status_code=status_code,
                 capture_metadata=capture_metadata,
+                detection_metadata=detection_metadata,
             )
             session.add(submitted)
             session.flush()

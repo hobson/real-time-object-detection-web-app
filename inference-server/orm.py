@@ -27,8 +27,8 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
-    JSON, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String,
-    Text, UniqueConstraint, create_engine, func,
+    JSON, Column, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer,
+    String, Table, Text, UniqueConstraint, create_engine, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -131,6 +131,16 @@ class DatasetLabel(Base):
 # Endpoint request/label logging — this server's own inference traffic
 # ---------------------------------------------------------------------------
 
+# Many-to-many: one image can carry several user-submitted tags, and one
+# tag (e.g. "car") applies across many images.
+submitted_image_tags = Table(
+    "submitted_image_tags",
+    Base.metadata,
+    Column("submitted_image_id", ForeignKey("submitted_images.id"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id"), primary_key=True),
+)
+
+
 class SubmittedImage(Base):
     """One row per image POSTed to `/predict` or `/alpr/predict`, or per
     frame received over `/alpr/ws`."""
@@ -158,12 +168,23 @@ class SubmittedImage(Base):
     # camera-facing data sent alongside the image over multipart (see
     # request_parsing.py), merged with server-derived data added by
     # persist.py's _build_capture_metadata - EXIF pulled from the image
-    # bytes (camera make/model/focal length/GPS, when present), which host
-    # ran inference, and a summary of what was detected. A single flexible
-    # JSON blob rather than a column per field, since this server has no
-    # migration tooling (see curation.py's module docstring) and the exact
-    # fields keep evolving.
+    # bytes (camera make/model/focal length/GPS, when present) and which
+    # host ran inference. A single flexible JSON blob rather than a column
+    # per field, since this server has no migration tooling (see
+    # curation.py's module docstring) and the exact fields keep evolving.
+    # Deliberately does NOT include detection results - see
+    # detection_metadata below; the two are about different things (the
+    # capture device/environment vs. the model's output) and were split
+    # into separate columns so querying/indexing one doesn't drag in the
+    # other.
     capture_metadata: Mapped[dict | None] = mapped_column(JSON)
+    # The YOLO-side counterpart to capture_metadata: a summary of what was
+    # detected (see persist.py's _detection_summary) - `{"count": int,
+    # "classes": {class_name: count}}`. The full per-detection data (boxes,
+    # confidence, etc.) already lives in DetectionLabel rows below; this is
+    # just a cheap denormalized summary for admin display/search without a
+    # join.
+    detection_metadata: Mapped[dict | None] = mapped_column(JSON)
     # Generated after the fact by describe.py's background queue (a
     # multimodal LLM call is way too slow to run inline with /predict) - an
     # accessibility-alt-text-style caption plus keywords. Editable in the
@@ -178,6 +199,9 @@ class SubmittedImage(Base):
 
     detections: Mapped[list["DetectionLabel"]] = relationship(
         "DetectionLabel", back_populates="submitted_image", cascade="all, delete-orphan"
+    )
+    tags: Mapped[list["Tag"]] = relationship(
+        "Tag", secondary=submitted_image_tags, back_populates="images"
     )
 
     def __repr__(self) -> str:
@@ -227,6 +251,30 @@ class DetectionLabel(Base):
 
     def __repr__(self) -> str:
         return f"<DetectionLabel {self.id} class={self.class_name} plate={self.plate_text!r}>"
+
+
+class Tag(Base):
+    """A user-submitted label for a SubmittedImage (e.g. "flower", "license
+    tag", "NYC") - many-to-many via submitted_image_tags, since one image
+    can carry several tags and one tag applies across many images.
+
+    Deliberately case-sensitive and space-permitting (plain String equality
+    and uniqueness, no normalization/lowercasing) - a curator's own
+    vocabulary (e.g. "NYC" vs "nyc", "license tag") shouldn't be silently
+    mangled.
+    """
+
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+
+    images: Mapped[list[SubmittedImage]] = relationship(
+        "SubmittedImage", secondary=submitted_image_tags, back_populates="tags"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Tag {self.id} {self.name!r}>"
 
 
 # ---------------------------------------------------------------------------

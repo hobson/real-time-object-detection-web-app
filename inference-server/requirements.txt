@@ -10,3 +10,6 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 httpx
+# Sibling project, same ~/code/hobs/ layout on both dev machines and taco -
+# see curation.py's module docstring.
+-e ../../flask-admin-toolkit

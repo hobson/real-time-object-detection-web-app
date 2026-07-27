@@ -27,6 +27,15 @@ _RootPathMiddleware
     above.
 column_editable_list
     Click-to-edit cells in the list view via Flask-Admin's x-editable widget.
+SearchableMixin / auto_sortable_columns / auto_searchable_columns
+    From the sibling flask-admin-toolkit package (~/code/hobs/flask-admin-
+    toolkit, installed as an editable dependency - see requirements.txt) -
+    gives every view mode-aware full-text search (substring by default;
+    quote for case-sensitive whole-word; `*` for regex) and makes every
+    column, including JSON blobs like capture_metadata, sortable/
+    searchable lexically. See that package's README for the full design
+    rationale; it started as a generalized copy of claude-admin's search
+    layer.
 """
 from functools import cached_property
 
@@ -37,9 +46,11 @@ from flask_admin.theme import Bootstrap4Theme
 from flask_sqlalchemy import SQLAlchemy
 from markupsafe import Markup
 
+from flask_admin_toolkit import SearchableMixin, auto_searchable_columns, auto_sortable_columns
+
 from orm import (
     Base, Dataset, DatasetClass, DatasetImage, DatasetLabel,
-    DetectionLabel, SubmittedImage,
+    DetectionLabel, SubmittedImage, Tag,
 )
 from persist import THUMBNAIL_DIR
 
@@ -78,7 +89,7 @@ class _CompactMixin:
         return [url_for("static", filename="hotkeys.js")]
 
 
-class _BaseView(_CompactMixin, ModelView):
+class _BaseView(_CompactMixin, SearchableMixin, ModelView):
     pass
 
 
@@ -88,26 +99,26 @@ class _BaseView(_CompactMixin, ModelView):
 
 class DatasetView(_BaseView):
     column_list = ["id", "name", "description", "created_at"]
-    column_searchable_list = ["name", "description"]
-    column_sortable_list = ["id", "name", "created_at"]
+    column_searchable_list = auto_searchable_columns(Dataset)
+    column_sortable_list = auto_sortable_columns(Dataset)
     column_default_sort = ("created_at", True)
     form_columns = ["name", "description"]
 
 
 class DatasetClassView(_BaseView):
     column_list = ["id", "dataset", "class_index", "name"]
-    column_searchable_list = ["name"]
+    column_searchable_list = auto_searchable_columns(DatasetClass)
     column_filters = ["dataset"]
-    column_sortable_list = ["id", "class_index", "name"]
+    column_sortable_list = auto_sortable_columns(DatasetClass)
     column_default_sort = ("class_index", False)
     form_columns = ["dataset", "class_index", "name"]
 
 
 class DatasetImageView(_BaseView):
     column_list = ["id", "dataset", "file_path", "split", "width", "height", "created_at"]
-    column_searchable_list = ["file_path"]
+    column_searchable_list = auto_searchable_columns(DatasetImage)
     column_filters = ["dataset", "split"]
-    column_sortable_list = ["id", "file_path", "split", "created_at"]
+    column_sortable_list = auto_sortable_columns(DatasetImage)
     column_default_sort = ("created_at", True)
     column_editable_list = ["split"]
     form_columns = ["dataset", "file_path", "width", "height", "split"]
@@ -118,7 +129,7 @@ class DatasetLabelView(_BaseView):
         "id", "image", "class_index", "x_center", "y_center", "width", "height",
     ]
     column_filters = ["class_index"]
-    column_sortable_list = ["id", "class_index"]
+    column_sortable_list = auto_sortable_columns(DatasetLabel)
     column_default_sort = ("id", False)
     form_columns = ["image", "class_index", "x_center", "y_center", "width", "height"]
 
@@ -141,34 +152,52 @@ def _description_formatter(view, context, model, name):
     return text if len(text) <= 80 else text[:77] + "..."
 
 
+def _tags_formatter(view, context, model, name):
+    return ", ".join(t.name for t in model.tags) if model.tags else ""
+
+
 class SubmittedImageView(_BaseView):
     column_list = [
         "id", "thumbnail_path", "endpoint", "model_name", "sha256", "width",
-        "height", "description", "inference_time_ms", "status_code",
+        "height", "description", "tags", "inference_time_ms", "status_code",
         "client_ip", "received_at",
     ]
     column_labels = {"thumbnail_path": "Thumbnail"}
     column_formatters = {
         "thumbnail_path": _thumbnail_formatter,
         "description": _description_formatter,
+        "tags": _tags_formatter,
     }
     # Inline textarea edit straight from the list view (same x-editable
     # pattern DatasetImageView uses for `split`) - a background-generated
     # caption is often close but not exactly what a curator wants, and
     # shouldn't require opening the full edit form just to tweak wording.
     column_editable_list = ["description"]
-    column_searchable_list = ["sha256", "client_ip", "description"]
-    column_filters = ["endpoint", "model_name", "status_code", "received_at"]
-    column_sortable_list = ["id", "endpoint", "inference_time_ms", "received_at"]
+    # auto_searchable_columns already covers every String/JSON column
+    # (sha256, client_ip, file_path, description, capture_metadata,
+    # detection_metadata, ...) - "tags.name" is added on top since it's a
+    # relationship, not a column, so the auto-deriver can't see it.
+    column_searchable_list = [*auto_searchable_columns(SubmittedImage), "tags.name"]
+    column_filters = ["endpoint", "model_name", "status_code", "received_at", "tags"]
+    column_sortable_list = auto_sortable_columns(SubmittedImage)
     column_default_sort = ("received_at", True)
-    # capture_metadata is a JSON blob (GPS/orientation/acceleration/camera-
-    # facing) - too bulky for the list view, kept in the per-row form below.
-    column_exclude_list = ["file_path", "content_type", "capture_metadata"]
+    # capture_metadata/detection_metadata are JSON blobs (see orm.py - one's
+    # about the capture device/environment, the other's the YOLO output
+    # summary) - too bulky for the list view, kept in the per-row form below.
+    column_exclude_list = ["file_path", "content_type", "capture_metadata", "detection_metadata"]
     form_columns = [
         "sha256", "file_path", "width", "height", "content_type", "endpoint",
         "model_name", "client_ip", "inference_time_ms", "status_code",
-        "description", "capture_metadata",
+        "description", "tags", "capture_metadata", "detection_metadata",
     ]
+
+
+class TagView(_BaseView):
+    column_list = ["id", "name"]
+    column_searchable_list = auto_searchable_columns(Tag)
+    column_sortable_list = auto_sortable_columns(Tag)
+    column_default_sort = ("name", False)
+    form_columns = ["name"]
 
 
 class DetectionLabelView(_BaseView):
@@ -176,9 +205,9 @@ class DetectionLabelView(_BaseView):
         "id", "submitted_image", "class_name", "confidence", "source",
         "plate_text", "ocr_confidence", "region", "model_name",
     ]
-    column_searchable_list = ["class_name", "plate_text", "model_name"]
+    column_searchable_list = auto_searchable_columns(DetectionLabel)
     column_filters = ["class_name", "model_name", "region", "source"]
-    column_sortable_list = ["id", "confidence", "ocr_confidence"]
+    column_sortable_list = auto_sortable_columns(DetectionLabel)
     column_default_sort = ("id", False)
     form_columns = [
         "submitted_image", "class_id", "class_name", "x_center", "y_center",
@@ -235,6 +264,7 @@ def create_app(db_url: str | None = None) -> Flask:
 
     admin.add_view(SubmittedImageView(SubmittedImage, db, name="Submitted Images", category="Endpoint Traffic"))
     admin.add_view(DetectionLabelView(DetectionLabel, db, name="Detection Labels", category="Endpoint Traffic"))
+    admin.add_view(TagView(Tag, db, name="Tags", category="Endpoint Traffic"))
     admin.add_view(DatasetView(Dataset, db, name="Datasets", category="Dataset Curation"))
     admin.add_view(DatasetClassView(DatasetClass, db, name="Dataset Classes", category="Dataset Curation"))
     admin.add_view(DatasetImageView(DatasetImage, db, name="Dataset Images", category="Dataset Curation"))
