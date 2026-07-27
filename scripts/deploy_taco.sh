@@ -4,22 +4,34 @@
 # plain directory, not a git repo, so per docs/user-manual.md §4 this is a
 # manual scp + restart, not a git pull.
 #
-# As of this writing, only two files differ from what's already live on
-# taco (checked via `diff <(ssh taco cat ...) inference-server/<file>`):
-#   - inference-server/alpr.py     (deduped a comment)
-#   - inference-server/curation.py (cached_property instead of property)
-# Everything else under inference-server/ (db.py, limits.py, main.py,
-# persist.py, orm.py, ...) is already byte-identical on taco.
+# Files that differ from what's live on taco as of this writing (checked
+# via `diff <(ssh taco cat ...) inference-server/<file>` for every .py file
+# under inference-server/): main.py, alpr.py, curation.py, persist.py,
+# orm.py, postprocess.py, and the new request_parsing.py. db.py and
+# limits.py are already byte-identical and skipped.
+#
+# orm.py's change (added SubmittedImage.capture_metadata and
+# DetectionLabel.source) needs an actual schema change on taco's already-
+# existing tables - `create_all()` alone won't add columns to a table that
+# already exists - so this also runs migrate_2026_07_26_capture_metadata.py
+# once after copying files, before restarting the services that would
+# otherwise start reading/writing those new columns.
 #
 # Not run automatically - review, then run this yourself:
-#   ./deploy_taco.sh
+#   ./scripts/deploy_taco.sh
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 REMOTE_DIR="~/code/hobs/real-time-object-detection-web-app/inference-server"
 
-scp inference-server/alpr.py inference-server/curation.py \
+scp inference-server/main.py inference-server/alpr.py \
+    inference-server/curation.py inference-server/persist.py \
+    inference-server/orm.py inference-server/postprocess.py \
+    inference-server/request_parsing.py \
+    inference-server/migrate_2026_07_26_capture_metadata.py \
     "taco:${REMOTE_DIR}/"
+
+ssh taco "cd ${REMOTE_DIR} && .venv/bin/python migrate_2026_07_26_capture_metadata.py"
 
 # The FastAPI process caches loaded state in memory, and gunicorn workers
 # don't pick up source changes without a restart - see docs/user-manual.md
