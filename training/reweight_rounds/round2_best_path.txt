@@ -1,0 +1,1 @@
+/home/hobs/code/hobs/real-time-object-detection-web-app/runs/detect/runs/license_plate/license_plate_ft_reweight_round2/weights/best.pt

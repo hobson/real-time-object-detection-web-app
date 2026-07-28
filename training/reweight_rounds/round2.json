@@ -1,0 +1,569 @@
+{
+  "person": {
+    "tp": 4031,
+    "fp": 1369,
+    "fn": 1716,
+    "f_beta": 0.71,
+    "weight": 3.6102
+  },
+  "bicycle": {
+    "tp": 223,
+    "fp": 118,
+    "fn": 332,
+    "f_beta": 0.4354,
+    "weight": 6.0816
+  },
+  "car": {
+    "tp": 154,
+    "fp": 46,
+    "fn": 195,
+    "f_beta": 0.4825,
+    "weight": 5.6579
+  },
+  "motorcycle": {
+    "tp": 373,
+    "fp": 281,
+    "fn": 550,
+    "f_beta": 0.4291,
+    "weight": 6.1378
+  },
+  "airplane": {
+    "tp": 12,
+    "fp": 21,
+    "fn": 24,
+    "f_beta": 0.339,
+    "weight": 6.9492
+  },
+  "bus": {
+    "tp": 78,
+    "fp": 126,
+    "fn": 277,
+    "f_beta": 0.2401,
+    "weight": 7.8387
+  },
+  "train": {
+    "tp": 61,
+    "fp": 36,
+    "fn": 56,
+    "f_beta": 0.5398,
+    "weight": 5.1416
+  },
+  "truck": {
+    "tp": 75,
+    "fp": 41,
+    "fn": 152,
+    "f_beta": 0.3662,
+    "weight": 6.7041
+  },
+  "boat": {
+    "tp": 0,
+    "fp": 4,
+    "fn": 1,
+    "f_beta": 0.0,
+    "weight": 10.0
+  },
+  "traffic light": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 3,
+    "f_beta": 0.0,
+    "weight": 10.0
+  },
+  "fire hydrant": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "stop sign": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "parking meter": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "bench": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "bird": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "cat": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "dog": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "horse": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "sheep": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "cow": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "elephant": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "bear": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "zebra": {
+    "tp": 0,
+    "fp": 1,
+    "fn": 0,
+    "f_beta": 0.0,
+    "weight": 0.1
+  },
+  "giraffe": {
+    "tp": 0,
+    "fp": 8,
+    "fn": 0,
+    "f_beta": 0.0,
+    "weight": 0.1
+  },
+  "backpack": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "umbrella": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "handbag": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "tie": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "suitcase": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "frisbee": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "skis": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "snowboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "sports ball": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "kite": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "baseball bat": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "baseball glove": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "skateboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "surfboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "tennis racket": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "bottle": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "wine glass": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "cup": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "fork": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "knife": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "spoon": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "bowl": {
+    "tp": 0,
+    "fp": 1,
+    "fn": 0,
+    "f_beta": 0.0,
+    "weight": 0.1
+  },
+  "banana": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "apple": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "sandwich": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "orange": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "broccoli": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "carrot": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "hot dog": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "pizza": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "donut": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "cake": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "chair": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "couch": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "potted plant": {
+    "tp": 0,
+    "fp": 2,
+    "fn": 0,
+    "f_beta": 0.0,
+    "weight": 0.1
+  },
+  "bed": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "dining table": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "toilet": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "tv": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "laptop": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "mouse": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "remote": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "keyboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "cell phone": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "microwave": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "oven": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "toaster": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "sink": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "refrigerator": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "book": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "clock": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "vase": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "scissors": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "teddy bear": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "hair drier": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "toothbrush": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "f_beta": null,
+    "weight": 1.0
+  },
+  "license_plate": {
+    "tp": 13,
+    "fp": 8,
+    "fn": 97,
+    "f_beta": 0.141,
+    "weight": 8.731
+  }
+}
