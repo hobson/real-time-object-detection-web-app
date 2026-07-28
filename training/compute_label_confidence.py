@@ -13,9 +13,12 @@ the mean across its labels' scores.
 
 Reference models (three, deliberately different lineages so they don't
 share the same blind spots):
-  1. The current best COCO-capable checkpoint (round3 - the actual model
-     this whole investigation is trying to fix) - persisted as new
-     DetectionLabel rows (label_source="machine") if not already present.
+  1. --current-model: the COCO-capable checkpoint this run is evaluating/
+     improving (default: round3's best.pt, but this must be re-pointed at
+     each new round's own checkpoint - see --current-model-name and
+     train_from_db.py's docstring for why staying in sync matters) -
+     persisted as new DetectionLabel rows (label_source="machine") if not
+     already present.
   2. The standalone license-plate detector (single-class, always outputs
      class 0 - remapped to LICENSE_PLATE_CLASS_ID for comparison/storage)
      - also persisted, satisfying item 2's "AND a model specifically
@@ -25,7 +28,8 @@ share the same blind spots):
      not persisted as its own labels (it's an evaluator here, not a new
      labeling pass someone asked to keep).
 
-Usage: python training/compute_label_confidence.py [--limit N] [--sources kitti,coco128,license_plates]
+Usage: python training/compute_label_confidence.py [--limit N] [--sources kitti,coco128,license_plates] \
+    [--current-model path/to/best.pt] [--current-model-name some_round_name]
 """
 import argparse
 import sys
@@ -56,23 +60,14 @@ NAMES: dict[int, str] = yaml.safe_load((PLATES_DIR / "dataset.yaml").read_text()
 IOU_MATCH_THRESHOLD = 0.5
 CONF_THRESHOLD = 0.25
 
-ROUND3_CHECKPOINT = (
+DEFAULT_CURRENT_CHECKPOINT = (
     REPO_ROOT / "runs" / "detect" / "runs" / "license_plate"
     / "license_plate_ft_reweight_round3" / "weights" / "best.pt"
 )
+DEFAULT_CURRENT_MODEL_NAME = "license_plate_ft_reweight_round3"
 PLATE_CHECKPOINT = REPO_ROOT / "models" / "yolo-v9-t-384-license-plate-end2end.onnx"
 PLATE_MODEL_NAME = "yolo-v9-t-384-license-plate-end2end"
 PLATE_RESOLUTION = (384, 384)
-
-# (model_path, imgsz, model_name, persist_as_labels) for the two models
-# ultralytics.YOLO() can load and run directly (round3's .pt checkpoint,
-# already in the unified 81-class space, and yolo11x.pt, standard COCO
-# ordering matching COCO's first 80 unified ids). The plate detector is
-# NOT here - see _run_plate_model below for why.
-REFERENCE_MODELS = [
-    (str(ROUND3_CHECKPOINT), 256, "license_plate_ft_reweight_round3", True),
-    ("yolo11x.pt", 640, "yolo11x", False),
-]
 
 
 def _to_xyxy(cx, cy, w, h) -> tuple[float, float, float, float]:
@@ -81,8 +76,14 @@ def _to_xyxy(cx, cy, w, h) -> tuple[float, float, float, float]:
 
 def _run_model(model: YOLO, image_path: str, imgsz) -> list[tuple[int, tuple]]:
     """Returns [(unified_class_id, (x0,y0,x1,y1) normalized), ...] for
-    detections above CONF_THRESHOLD."""
-    result = model.predict(image_path, imgsz=imgsz, conf=CONF_THRESHOLD, verbose=False)[0]
+    detections above CONF_THRESHOLD.
+
+    device="cpu" is explicit, not incidental: on taco (ROCm-enabled torch),
+    letting ultralytics auto-select the GPU segfaulted the process outright
+    for this model/op combination on that iGPU (gfx1151) - this script runs
+    once over the whole dataset and needs to not crash more than it needs
+    GPU speed, so CPU is the safer default everywhere it runs."""
+    result = model.predict(image_path, imgsz=imgsz, conf=CONF_THRESHOLD, verbose=False, device="cpu")[0]
     if result.boxes is None:
         return []
     w, h = result.orig_shape[1], result.orig_shape[0]
@@ -169,11 +170,31 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sources", default="kitti,coco128,license_plates")
     parser.add_argument("--limit", type=int, default=None, help="Cap total images scored (for smoke-testing).")
+    parser.add_argument(
+        "--current-model", default=str(DEFAULT_CURRENT_CHECKPOINT),
+        help="The COCO-capable checkpoint currently being evaluated/improved (e.g. this round's "
+        "training output) - re-run this script against each new round's checkpoint so train_from_db.py's "
+        "oversampling reflects that round's actual mistakes, not a stale earlier one.",
+    )
+    parser.add_argument(
+        "--current-model-name", default=DEFAULT_CURRENT_MODEL_NAME,
+        help="model_name to persist this checkpoint's detections under - train_from_db.py's --current-model-name must match.",
+    )
     args = parser.parse_args()
     source_tags = [s.strip() for s in args.sources.split(",")]
 
+    # (model_path, imgsz, model_name, persist_as_labels) for the two models
+    # ultralytics.YOLO() can load and run directly - the current checkpoint
+    # (already in the unified 81-class space) and yolo11x.pt (standard COCO
+    # ordering matching COCO's first 80 unified ids). The plate detector is
+    # handled separately (_run_plate_model) - see its docstring for why.
+    reference_models = [
+        (args.current_model, 256, args.current_model_name, True),
+        ("yolo11x.pt", 640, "yolo11x", False),
+    ]
+
     print("[confidence] Loading reference models (yolo11x.pt auto-downloads on first use)...")
-    models = [(YOLO(path), imgsz, name, persist) for path, imgsz, name, persist in REFERENCE_MODELS]
+    models = [(YOLO(path), imgsz, name, persist) for path, imgsz, name, persist in reference_models]
     plate_session = ort.InferenceSession(str(PLATE_CHECKPOINT), providers=["CPUExecutionProvider"])
 
     engine = engine_from_env()
