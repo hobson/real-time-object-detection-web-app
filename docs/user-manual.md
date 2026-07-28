@@ -16,10 +16,13 @@ Both are backed by a Postgres database (`orm.py`'s tables) that records
 detection returned for it** — so nothing analyzed through the API is lost;
 it all becomes reviewable/curatable data.
 
+<<<<<<< HEAD
+=======
 See [`system-architecture.md`](./system-architecture.md) for a network-level
 diagram of how these pieces (and the frontend, Tailscale Funnel routing, and
 training pipeline) fit together.
 
+>>>>>>> 00189ca3dedb7f88ca31d958deec2e78b2e52c7f
 ## 1. Calling the inference API (`/infer`)
 
 All paths below are relative to `https://taco.tail9f615d.ts.net:10000/infer`.
@@ -86,6 +89,8 @@ curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/predict?model=yolo12n.o
 width/height (not the model's internal input resolution) — multiply by your
 image dimensions to get pixel coordinates.
 
+<<<<<<< HEAD
+=======
 ### Attaching capture metadata (multipart)
 
 Both `/predict` and `/alpr/predict` also accept `multipart/form-data`
@@ -119,6 +124,7 @@ other detection, but with `source="client"` instead of the default
 multipart request gets back exactly the same JSON either endpoint would
 return for a plain raw-body request.
 
+>>>>>>> 00189ca3dedb7f88ca31d958deec2e78b2e52c7f
 ### `POST /alpr/predict` — license plate detection + OCR
 
 Body is a single JPEG frame (raw bytes). No `model` param — always uses the
@@ -203,6 +209,8 @@ funnel URL.
   (`plate_text`, `ocr_confidence`, `region`) are blank for non-ALPR
   detections.
 
+<<<<<<< HEAD
+=======
 ### Correcting machine-labeled detections
 
 The model's output isn't locked in — every field it wrote is a normal
@@ -231,6 +239,7 @@ editing a label in place *is* the correction.
    `ALPR_OCR_MODEL` models serving new requests. To build a training set from
    corrected examples, copy them into **Dataset Curation** (below) instead.
 
+>>>>>>> 00189ca3dedb7f88ca31d958deec2e78b2e52c7f
 ### Dataset Curation
 
 A separate, generic YOLO dataset schema — not automatically populated from
