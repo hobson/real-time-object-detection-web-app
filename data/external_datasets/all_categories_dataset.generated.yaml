@@ -1,6 +1,6 @@
 path: /home/hobs/code/hobs/real-time-object-detection-web-app/data/license_plates
 train: /home/hobs/code/hobs/real-time-object-detection-web-app/data/external_datasets/all_categories_train.generated.txt
-val: /home/hobs/code/hobs/real-time-object-detection-web-app/data/license_plates/val.txt
+val: /home/hobs/code/hobs/real-time-object-detection-web-app/data/external_datasets/all_categories_val.generated.txt
 names:
   0: person
   1: bicycle

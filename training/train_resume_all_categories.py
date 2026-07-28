@@ -49,6 +49,7 @@ KITTI_DIR = REPO_ROOT / "data" / "external_datasets" / "kitti"
 KITTI_UNIFIED_DIR = REPO_ROOT / "data" / "external_datasets" / "kitti_unified"
 COCO128_DIR = REPO_ROOT / "data" / "external_datasets" / "coco128"
 GENERATED_MANIFEST = REPO_ROOT / "data" / "external_datasets" / "all_categories_train.generated.txt"
+GENERATED_VAL_MANIFEST = REPO_ROOT / "data" / "external_datasets" / "all_categories_val.generated.txt"
 GENERATED_DATASET_YAML = REPO_ROOT / "data" / "external_datasets" / "all_categories_dataset.generated.yaml"
 
 # KITTI's own 8 classes (see data/external_datasets/kitti/kitti.yaml) mapped
@@ -148,6 +149,49 @@ def build_combined_manifest(kitti_fraction: float, seed: int) -> tuple[int, int]
     return len(kitti_subset), len(coco128_images)
 
 
+def build_broad_val_manifest() -> tuple[int, int]:
+    """KITTI's held-out val split (1496 images, remapped+merged the same way
+    as train() - see remap_and_merge_kitti_labels) + this dataset's own
+    license_plates/val.txt (73 plate-context photos). Gives real per-class
+    evidence for every KITTI-mapped class (person, car, truck, bicycle,
+    train) plus license_plate, not just whatever happens to co-occur in
+    plate photos - compute_class_fn_fp_rates.py was previously pointed at
+    license_plates/val.txt alone, which left most classes with zero GT/
+    predictions in the whole split (fn=fp=0 -> weight defaults to a
+    meaningless 1.0, not "doing fine").
+
+    COCO128 is deliberately NOT included here even though it's used for
+    training (see build_combined_manifest): COCO128 has no real val split
+    (ultralytics' own coco128.yaml points val at the same train2017 images -
+    it's a tiny debug set, not meant to have held-out data), so including it
+    here would evaluate on training data for that portion, not held-out
+    data. Genuinely COCO-only classes (not among KITTI's 8 or license_plate)
+    still get no val signal from local data - that's a real gap, not fixed
+    here; a full COCO val2017 download would be the next step if that
+    matters more than the current per-class signal already gained.
+    """
+    kitti_images_dir, _ = remap_and_merge_kitti_labels("val")
+    kitti_images = sorted(kitti_images_dir.glob("*.png")) + sorted(kitti_images_dir.glob("*.jpg"))
+
+    plate_val_images = _list_images_from_manifest(DATASET_DIR / "val.txt")
+
+    all_images = [p.resolve() for p in kitti_images] + [p.resolve() for p in plate_val_images]
+    GENERATED_VAL_MANIFEST.write_text("\n".join(str(p) for p in all_images) + "\n")
+    return len(kitti_images), len(plate_val_images)
+
+
+def _list_images_from_manifest(manifest: Path) -> list[Path]:
+    base = manifest.parent
+    images = []
+    for line in manifest.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        p = Path(line)
+        images.append(p if p.is_absolute() else (base / p).resolve())
+    return images
+
+
 def label_path_for_image(image_path: Path) -> Path:
     parts = list(image_path.parts)
     for i in range(len(parts) - 1, -1, -1):
@@ -201,6 +245,22 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--project", default="runs/license_plate")
     parser.add_argument("--name", default="license_plate_ft_all_categories")
+    parser.add_argument(
+        "--class-weights-file",
+        default=None,
+        help="Path to a precomputed class_weights tensor (.pt), e.g. from "
+        "compute_class_fn_fp_rates.py's accuracy-driven weights. If unset, "
+        "falls back to this script's own frequency-based 'balanced' weights "
+        "- the sensible default for a first round with no prior checkpoint "
+        "to evaluate yet.",
+    )
+    parser.add_argument(
+        "--best-path-out",
+        default=None,
+        help="If set, write the final best.pt's resolved path to this file "
+        "- avoids callers having to reconstruct ultralytics' project/name/"
+        "task nesting by hand (see the comment on best_path below).",
+    )
     args = parser.parse_args()
 
     dataset_config = yaml.safe_load((DATASET_DIR / "dataset.yaml").read_text())
@@ -211,11 +271,19 @@ def main():
     all_images = [Path(line) for line in GENERATED_MANIFEST.read_text().splitlines() if line.strip()]
     print(f"[train-resume] {n_kitti} KITTI + {n_coco128} COCO128 = {len(all_images)} total training images")
 
-    class_weights = compute_balanced_class_weights(all_images, num_classes)
+    if args.class_weights_file:
+        class_weights = torch.load(args.class_weights_file)
+        print(f"[train-resume] Loaded class_weights from {args.class_weights_file}")
+    else:
+        class_weights = compute_balanced_class_weights(all_images, num_classes)
+
+    print("[train-resume] Building broad val manifest (KITTI val split + license_plates val)")
+    n_kitti_val, n_plate_val = build_broad_val_manifest()
+    print(f"[train-resume] {n_kitti_val} KITTI val + {n_plate_val} plate val = {n_kitti_val + n_plate_val} val images")
 
     config = dict(dataset_config)
     config["train"] = str(GENERATED_MANIFEST.resolve())
-    config["val"] = str((DATASET_DIR / "val.txt").resolve())
+    config["val"] = str(GENERATED_VAL_MANIFEST.resolve())
     GENERATED_DATASET_YAML.write_text(yaml.safe_dump(config, sort_keys=False))
 
     print(f"[train-resume] Loading checkpoint {args.checkpoint}")
@@ -246,6 +314,9 @@ def main():
     restore_attention_position_encoding_bias(final_model.model, args.base_model)
     final_model.save(best_path)
     print(f"[train-resume] Done - {best_path} is ready to export")
+
+    if args.best_path_out:
+        Path(args.best_path_out).write_text(best_path)
 
 
 if __name__ == "__main__":
