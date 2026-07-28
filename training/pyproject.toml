@@ -15,6 +15,10 @@ dependencies = [
     "sqlalchemy>=2.0",
     "psycopg2-binary>=2.9",
     "python-dotenv>=1.0",
+    # compute_label_confidence.py runs the plate detector's static-shape
+    # ONNX export directly (not via ultralytics.YOLO(), which auto-
+    # letterboxes to a rectangular shape this fixed-shape model rejects).
+    "onnxruntime>=1.18",
 ]
 
 [project.optional-dependencies]

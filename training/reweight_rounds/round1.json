@@ -1,0 +1,650 @@
+{
+  "person": {
+    "tp": 3835,
+    "fp": 1288,
+    "fn": 1912,
+    "fn_rate": 0.3327,
+    "fp_rate": 0.2514,
+    "weight": 1.3233
+  },
+  "bicycle": {
+    "tp": 175,
+    "fp": 138,
+    "fn": 380,
+    "fn_rate": 0.6847,
+    "fp_rate": 0.4409,
+    "weight": 1.5529
+  },
+  "car": {
+    "tp": 119,
+    "fp": 23,
+    "fn": 230,
+    "fn_rate": 0.659,
+    "fp_rate": 0.162,
+    "weight": 4.0688
+  },
+  "motorcycle": {
+    "tp": 312,
+    "fp": 212,
+    "fn": 611,
+    "fn_rate": 0.662,
+    "fp_rate": 0.4046,
+    "weight": 1.6362
+  },
+  "airplane": {
+    "tp": 12,
+    "fp": 16,
+    "fn": 24,
+    "fn_rate": 0.6667,
+    "fp_rate": 0.5714,
+    "weight": 1.1667
+  },
+  "bus": {
+    "tp": 50,
+    "fp": 57,
+    "fn": 305,
+    "fn_rate": 0.8592,
+    "fp_rate": 0.5327,
+    "weight": 1.6128
+  },
+  "train": {
+    "tp": 40,
+    "fp": 17,
+    "fn": 77,
+    "fn_rate": 0.6581,
+    "fp_rate": 0.2982,
+    "weight": 2.2066
+  },
+  "truck": {
+    "tp": 40,
+    "fp": 17,
+    "fn": 187,
+    "fn_rate": 0.8238,
+    "fp_rate": 0.2982,
+    "weight": 2.7621
+  },
+  "boat": {
+    "tp": 0,
+    "fp": 5,
+    "fn": 1,
+    "fn_rate": 1.0,
+    "fp_rate": 1.0,
+    "weight": 1.0
+  },
+  "traffic light": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 3,
+    "fn_rate": 1.0,
+    "fp_rate": 0.0,
+    "weight": 10.0
+  },
+  "fire hydrant": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "stop sign": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "parking meter": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "bench": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "bird": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "cat": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "dog": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "horse": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "sheep": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "cow": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "elephant": {
+    "tp": 0,
+    "fp": 2,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 1.0,
+    "weight": 0.1
+  },
+  "bear": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "zebra": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "giraffe": {
+    "tp": 0,
+    "fp": 3,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 1.0,
+    "weight": 0.1
+  },
+  "backpack": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "umbrella": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "handbag": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "tie": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "suitcase": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "frisbee": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "skis": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "snowboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "sports ball": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "kite": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "baseball bat": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "baseball glove": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "skateboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "surfboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "tennis racket": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "bottle": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "wine glass": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "cup": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "fork": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "knife": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "spoon": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "bowl": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "banana": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "apple": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "sandwich": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "orange": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "broccoli": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "carrot": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "hot dog": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "pizza": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "donut": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "cake": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "chair": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "couch": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "potted plant": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "bed": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "dining table": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "toilet": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "tv": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "laptop": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "mouse": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "remote": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "keyboard": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "cell phone": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "microwave": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "oven": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "toaster": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "sink": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "refrigerator": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "book": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "clock": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "vase": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "scissors": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "teddy bear": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "hair drier": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "toothbrush": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "fn_rate": 0.0,
+    "fp_rate": 0.0,
+    "weight": 1.0
+  },
+  "license_plate": {
+    "tp": 13,
+    "fp": 10,
+    "fn": 97,
+    "fn_rate": 0.8818,
+    "fp_rate": 0.4348,
+    "weight": 2.0282
+  }
+}

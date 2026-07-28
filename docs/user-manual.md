@@ -16,6 +16,13 @@ Both are backed by a Postgres database (`orm.py`'s tables) that records
 detection returned for it** — so nothing analyzed through the API is lost;
 it all becomes reviewable/curatable data.
 
+<<<<<<< HEAD
+=======
+See [`system-architecture.md`](./system-architecture.md) for a network-level
+diagram of how these pieces (and the frontend, Tailscale Funnel routing, and
+training pipeline) fit together.
+
+>>>>>>> 00189ca3dedb7f88ca31d958deec2e78b2e52c7f
 ## 1. Calling the inference API (`/infer`)
 
 All paths below are relative to `https://taco.tail9f615d.ts.net:10000/infer`.
@@ -82,6 +89,42 @@ curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/predict?model=yolo12n.o
 width/height (not the model's internal input resolution) — multiply by your
 image dimensions to get pixel coordinates.
 
+<<<<<<< HEAD
+=======
+### Attaching capture metadata (multipart)
+
+Both `/predict` and `/alpr/predict` also accept `multipart/form-data`
+instead of a raw body, for clients that have more than just the image to
+send — an `image` file part plus an optional `metadata` JSON string part:
+
+```bash
+curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/predict" \
+  -F "image=@photo.jpg;type=image/jpeg" \
+  -F 'metadata={"gps":{"lat":37.7749,"lon":-122.4194,"accuracy":8.0},"camera_facing":"environment"}'
+```
+
+`metadata` is a free-form JSON object — nothing in it is validated beyond
+"is this a JSON object" — but the fields a client is expected to send are:
+
+| Field | Shape | Source |
+|---|---|---|
+| `gps` | `{lat, lon, altitude?, accuracy?, heading?, speed?}` | `navigator.geolocation` |
+| `orientation` | `{alpha, beta, gamma}` | `DeviceOrientationEvent` (compass heading + tilt) |
+| `acceleration` | `{x, y, z}` | `DeviceMotionEvent.acceleration` |
+| `rotation_rate` | `{alpha, beta, gamma}` | `DeviceMotionEvent.rotationRate` (gyroscope) |
+| `camera_facing` | `"user"` \| `"environment"` | which physical camera captured the frame |
+| `client_detections` | same shape as this endpoint's own `detections` response field | the client's own YOLO results, if it ran detection itself before/instead of relying on this call |
+
+Everything is optional and stored as-is (`SubmittedImage.capture_metadata`,
+a JSON column — see §2's Submitted Images detail view). `client_detections`
+specifically is pulled out and stored as `DetectionLabel` rows like any
+other detection, but with `source="client"` instead of the default
+`"server"`, so `/admin`'s Detection Labels table can tell the two apart
+(filter by `source`). None of this changes the response shape — a
+multipart request gets back exactly the same JSON either endpoint would
+return for a plain raw-body request.
+
+>>>>>>> 00189ca3dedb7f88ca31d958deec2e78b2e52c7f
 ### `POST /alpr/predict` — license plate detection + OCR
 
 Body is a single JPEG frame (raw bytes). No `model` param — always uses the
@@ -166,6 +209,37 @@ funnel URL.
   (`plate_text`, `ocr_confidence`, `region`) are blank for non-ALPR
   detections.
 
+<<<<<<< HEAD
+=======
+### Correcting machine-labeled detections
+
+The model's output isn't locked in — every field it wrote is a normal
+database row you can fix by hand. There's no "confirm"/"reject" workflow;
+editing a label in place *is* the correction.
+
+1. Find the image in **Submitted Images** (search by `sha256` or filter by
+   `endpoint`/`received_at`) and open its `file_path` on taco's disk to see
+   what was actually submitted — the admin list doesn't render the image
+   inline.
+2. Go to **Detection Labels** and filter by `submitted_image` to see just
+   that image's detections (a `SubmittedImage` row doesn't embed its
+   detections directly — they're a separate, filterable table because one
+   image can have many).
+3. Fix a wrong reading directly:
+   - Misread plate text or wrong class → click-to-edit `plate_text` /
+     `class_name` in the list view, or open the row's full edit form for
+     everything else (`confidence`, box coordinates, `region`,
+     `region_confidence`).
+   - A phantom detection (box shouldn't exist at all) or a missed plate
+     (no box was drawn) → delete the bogus row, or add a new
+     `DetectionLabel` row by hand with `submitted_image` set to the image
+     it belongs to.
+4. Corrections here only fix the historical record for review/export — they
+   don't retrain or otherwise feed back into the live `ALPR_DETECTOR_MODEL`/
+   `ALPR_OCR_MODEL` models serving new requests. To build a training set from
+   corrected examples, copy them into **Dataset Curation** (below) instead.
+
+>>>>>>> 00189ca3dedb7f88ca31d958deec2e78b2e52c7f
 ### Dataset Curation
 
 A separate, generic YOLO dataset schema — not automatically populated from

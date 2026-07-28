@@ -81,8 +81,14 @@ def _to_xyxy(cx, cy, w, h) -> tuple[float, float, float, float]:
 
 def _run_model(model: YOLO, image_path: str, imgsz) -> list[tuple[int, tuple]]:
     """Returns [(unified_class_id, (x0,y0,x1,y1) normalized), ...] for
-    detections above CONF_THRESHOLD."""
-    result = model.predict(image_path, imgsz=imgsz, conf=CONF_THRESHOLD, verbose=False)[0]
+    detections above CONF_THRESHOLD.
+
+    device="cpu" is explicit, not incidental: on taco (ROCm-enabled torch),
+    letting ultralytics auto-select the GPU segfaulted the process outright
+    for this model/op combination on that iGPU (gfx1151) - this script runs
+    once over the whole dataset and needs to not crash more than it needs
+    GPU speed, so CPU is the safer default everywhere it runs."""
+    result = model.predict(image_path, imgsz=imgsz, conf=CONF_THRESHOLD, verbose=False, device="cpu")[0]
     if result.boxes is None:
         return []
     w, h = result.orig_shape[1], result.orig_shape[0]

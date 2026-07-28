@@ -1,0 +1,108 @@
+# ultralytics-compatible dataset config.
+# Usage: yolo detect train data=data/license_plates/dataset.yaml model=... (see training/finetune_license_plate.py)
+# NOTE: `path` must be absolute - ultralytics resolves relative `path`
+# values against the invocation cwd, not this file's own directory, which
+# breaks unless training is always launched from this exact directory.
+path: /home/hobs/code/hobs/real-time-object-detection-web-app/data/license_plates
+train: train.txt
+val: val.txt
+
+# Full 81-class scheme matching the surgically-modified model (COCO's 80 +
+# license_plate at index 80). Label files use class index 80 for plates.
+#
+# IMPORTANT: these names are ultralytics' own internal COCO names (from
+# the pretrained checkpoint's model.names), NOT this repo's
+# data/yolo_classes.ts naming convention - they differ for 6 classes
+# (motorcycle/motorbike, airplane/aeroplane, couch/sofa, potted
+# plant/pottedplant, dining table/diningtable, tv/tvmonitor). This must
+# match the checkpoint's names exactly: ultralytics remaps a fine-tuning
+# checkpoint's classification-head weights onto the target dataset's
+# classes *by name string*, and silently re-randomizes any class whose
+# name doesn't match - which would have quietly undone the class-head
+# surgery's weight preservation for those 6 classes if left mismatched
+# (caught by checking the "Remapped N/81 cls head rows" training log line
+# - it read 75/81 with this repo's naming, 81/81 with these exact names).
+# This mismatch has zero effect on the app itself - only the exported
+# .onnx's class *order* (by index) matters there, not these label strings.
+names:
+  0: person
+  1: bicycle
+  2: car
+  3: motorcycle
+  4: airplane
+  5: bus
+  6: train
+  7: truck
+  8: boat
+  9: traffic light
+  10: fire hydrant
+  11: stop sign
+  12: parking meter
+  13: bench
+  14: bird
+  15: cat
+  16: dog
+  17: horse
+  18: sheep
+  19: cow
+  20: elephant
+  21: bear
+  22: zebra
+  23: giraffe
+  24: backpack
+  25: umbrella
+  26: handbag
+  27: tie
+  28: suitcase
+  29: frisbee
+  30: skis
+  31: snowboard
+  32: sports ball
+  33: kite
+  34: baseball bat
+  35: baseball glove
+  36: skateboard
+  37: surfboard
+  38: tennis racket
+  39: bottle
+  40: wine glass
+  41: cup
+  42: fork
+  43: knife
+  44: spoon
+  45: bowl
+  46: banana
+  47: apple
+  48: sandwich
+  49: orange
+  50: broccoli
+  51: carrot
+  52: hot dog
+  53: pizza
+  54: donut
+  55: cake
+  56: chair
+  57: couch
+  58: potted plant
+  59: bed
+  60: dining table
+  61: toilet
+  62: tv
+  63: laptop
+  64: mouse
+  65: remote
+  66: keyboard
+  67: cell phone
+  68: microwave
+  69: oven
+  70: toaster
+  71: sink
+  72: refrigerator
+  73: book
+  74: clock
+  75: vase
+  76: scissors
+  77: teddy bear
+  78: hair drier
+  79: toothbrush
+  80: license_plate
