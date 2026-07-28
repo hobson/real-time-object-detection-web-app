@@ -2,10 +2,13 @@ import Head from "next/head";
 import Yolo from "../components/models/Yolo";
 import YoloServer from "../components/models/YoloServer";
 import AlprServer from "../components/models/AlprServer";
+import StreamServer from "../components/models/StreamServer";
 import { useState } from "react";
 
 export default function Home() {
-  const [mode, setMode] = useState<"local" | "server" | "alpr">("local");
+  const [mode, setMode] = useState<"local" | "server" | "alpr" | "stream">(
+    "local"
+  );
 
   return (
     <>
@@ -36,13 +39,23 @@ export default function Home() {
           >
             License plates (server, ~1 fps)
           </button>
+          <button
+            onClick={() => setMode("stream")}
+            className={`p-2 border-2 border-dashed rounded-xl hover:translate-y-1 ${
+              mode === "stream" ? "bg-white text-black" : ""
+            }`}
+          >
+            Full-res stream (server, 1-6 fps)
+          </button>
         </div>
         {mode === "local" ? (
           <Yolo />
         ) : mode === "server" ? (
           <YoloServer />
-        ) : (
+        ) : mode === "alpr" ? (
           <AlprServer />
+        ) : (
+          <StreamServer />
         )}
         <p className="m-5">
           Created by{" "}

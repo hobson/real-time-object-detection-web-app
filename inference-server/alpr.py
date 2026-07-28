@@ -43,14 +43,16 @@ import time
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Body, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from open_image_models.detection.core.hub import PlateDetectorModel
 from fast_plate_ocr.inference.hub import OcrModel
 
 from fast_alpr import ALPR
+from describe import enqueue_description
 from limits import MAX_UPLOAD_BYTES, validate_body_size
 from persist import persist_submission
+from request_parsing import IMAGE_UPLOAD_OPENAPI_EXTRA, parse_image_and_metadata
 
 logger = logging.getLogger("alpr")
 
@@ -119,10 +121,17 @@ def _run_alpr(frame: np.ndarray) -> dict:
 
 
 def _persist_alpr(
-    *, frame: np.ndarray, jpeg_bytes: bytes, endpoint: str, client_ip: str | None, result: dict
-) -> None:
+    *,
+    frame: np.ndarray,
+    jpeg_bytes: bytes,
+    endpoint: str,
+    client_ip: str | None,
+    result: dict,
+    capture_metadata: dict | None = None,
+    client_detections: list[dict] | None = None,
+) -> int | None:
     height, width = frame.shape[:2]
-    persist_submission(
+    return persist_submission(
         image_bytes=jpeg_bytes,
         endpoint=endpoint,
         width=width,
@@ -144,6 +153,8 @@ def _persist_alpr(
             }
             for d in result["detections"]
         ],
+        capture_metadata=capture_metadata,
+        client_detections=client_detections,
     )
 
 
@@ -152,19 +163,32 @@ def health():
     return {"status": "ok"}
 
 
-@router.post("/predict")
-async def predict(
-    request: Request,
-    body: bytes = Body(..., media_type="image/jpeg"),
-):
+@router.post("/predict", openapi_extra=IMAGE_UPLOAD_OPENAPI_EXTRA)
+async def predict(request: Request):
     """Detect and OCR license plates in a single image.
 
-    **Request body**: raw JPEG bytes (`Content-Type: image/jpeg`) — no
-    multipart form, no `model` query param. The image can be a close-up of a
-    single plate or a full scene (e.g. a whole vehicle or a street photo);
-    the detector locates every plate-shaped region in the frame first, then
-    runs OCR on each one independently, so multiple plates in one image each
-    get their own entry in `detections`.
+    **Request body** - either:
+    - raw JPEG bytes (`Content-Type: image/jpeg`), the original contract:
+
+      ```bash
+      curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/alpr/predict" \\
+        --data-binary @plate.jpg -H "Content-Type: image/jpeg"
+      ```
+
+      (The "Try it out" button below sends the same request — pick a file
+      and hit Execute — but the endpoint doesn't accept a `curl -d ''`
+      with no body, since a JPEG is required.)
+    - `multipart/form-data` with an `image` file part and an optional
+      `metadata` JSON string part (GPS/orientation/acceleration/camera-
+      facing, and/or a `client_detections` array) - see
+      docs/user-manual.md and main.py's `/predict` docstring, which
+      documents the same shape.
+
+    The image can be a close-up of a single plate or a full scene (e.g. a
+    whole vehicle or a street photo); the detector locates every
+    plate-shaped region in the frame first, then runs OCR on each one
+    independently, so multiple plates in one image each get their own
+    entry in `detections`.
 
     **Response**: `{"inferenceTimeMs": float, "detections": [...]}`. Each
     detection has `box` (`[x0, y0, x1, y1]`, normalized 0-1 against the
@@ -174,29 +198,32 @@ async def predict(
     when a plate box was found but the text couldn't be read confidently —
     that's a normal outcome for blurry, angled, or partially occluded
     plates, not an error.
-
-    ```bash
-    curl -X POST "https://taco.tail9f615d.ts.net:10000/infer/alpr/predict" \\
-      --data-binary @plate.jpg -H "Content-Type: image/jpeg"
-    ```
-
-    (The "Try it out" button below sends the same request — pick a file
-    and hit Execute — but the endpoint doesn't accept a `curl -d ''`
-    with no body, since a JPEG is required.)
     """
+    body, metadata, _content_type = await parse_image_and_metadata(request)
     validate_body_size(body)
+    client_detections = metadata.pop("client_detections", None) if metadata else None
     try:
         frame = _decode_jpeg(body)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     result = _run_alpr(frame)
-    _persist_alpr(
+    submitted_image_id = _persist_alpr(
         frame=frame,
         jpeg_bytes=body,
         endpoint="/alpr/predict",
         client_ip=request.client.host if request.client else None,
         result=result,
+        capture_metadata=metadata,
+        client_detections=client_detections,
     )
+    # /predict (this endpoint, and main.py's) can also be called many times
+    # a second by a live-detection loop - the bounded drop-on-full queue
+    # (see describe.py's module docstring) is what actually protects
+    # against that, for both. /alpr/ws below skips enqueueing entirely
+    # instead of relying on that same bounding: it's a guaranteed-continuous
+    # ~1fps stream of plate close-ups, which don't benefit from a scene
+    # caption at all, so there's nothing worth even attempting there.
+    enqueue_description(submitted_image_id, body, "image/jpeg")
     return JSONResponse(result)
 
 

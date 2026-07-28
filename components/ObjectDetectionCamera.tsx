@@ -16,10 +16,26 @@ const ObjectDetectionCamera = (props: {
   onRetrySession: () => void;
   // Fully owns one detection pass: capture -> infer (locally or over the
   // network) -> draw boxes on ctx -> return inference time in ms. Keeps
-  // this component ignorant of *how* inference happens.
-  detect: (ctx: CanvasRenderingContext2D) => Promise<number>;
+  // this component ignorant of *how* inference happens. `isSingleCapture`
+  // is true only for the explicit "Capture Photo" button, false for every
+  // frame of "Live Detection" - lets a mode treat a deliberate one-off
+  // capture differently from the continuous loop (e.g. Yolo.tsx always
+  // forwards a single capture to the server regardless of what it detects,
+  // rather than only opportunistically like it does during live detection).
+  detect: (
+    ctx: CanvasRenderingContext2D,
+    opts: { isSingleCapture: boolean }
+  ) => Promise<number>;
   currentModelResolution: number[];
   changeCurrentModelResolution: (width?: number, height?: number) => void;
+  // When true, size the capture canvas to the webcam's native resolution
+  // (video.videoWidth/videoHeight) instead of its on-page display size -
+  // for modes that need the full-resolution frame (e.g. streaming full-res
+  // JPEGs to a server) rather than whatever size the video happens to be
+  // rendered at. Defaults to false (existing behavior) for every other
+  // mode, which intentionally captures at display resolution since that's
+  // all the model input (or the display overlay) needs.
+  nativeResolutionCapture?: boolean;
 }) => {
   const [inferenceTime, setInferenceTime] = useState<number>(0);
   const [totalTime, setTotalTime] = useState<number>(0);
@@ -62,9 +78,12 @@ const ObjectDetectionCamera = (props: {
     return context;
   };
 
-  const runModel = async (ctx: CanvasRenderingContext2D) => {
+  const runModel = async (
+    ctx: CanvasRenderingContext2D,
+    isSingleCapture: boolean
+  ) => {
     if (!props.ready) return;
-    const inferenceTime = await props.detect(ctx);
+    const inferenceTime = await props.detect(ctx, { isSingleCapture });
     setInferenceTime(inferenceTime);
   };
 
@@ -79,7 +98,7 @@ const ObjectDetectionCamera = (props: {
       const startTime = Date.now();
       const ctx = capture();
       if (!ctx) return;
-      await runModel(ctx);
+      await runModel(ctx, false);
       setTotalTime(Date.now() - startTime);
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => resolve())
@@ -100,7 +119,7 @@ const ObjectDetectionCamera = (props: {
     boxCtx.canvas.height = ctx.canvas.height;
     boxCtx.drawImage(ctx.canvas, 0, 0);
 
-    await runModel(boxCtx);
+    await runModel(boxCtx, true);
     ctx.drawImage(boxCtx.canvas, 0, 0, ctx.canvas.width, ctx.canvas.height);
   };
 
@@ -115,8 +134,8 @@ const ObjectDetectionCamera = (props: {
   const setWebcamCanvasOverlaySize = () => {
     const element = webcamRef.current!.video!;
     if (!element) return;
-    var w = element.offsetWidth;
-    var h = element.offsetHeight;
+    var w = props.nativeResolutionCapture ? element.videoWidth : element.offsetWidth;
+    var h = props.nativeResolutionCapture ? element.videoHeight : element.offsetHeight;
     var cv = videoCanvasRef.current;
     if (!cv) return;
     cv.width = w;
@@ -159,10 +178,10 @@ const ObjectDetectionCamera = (props: {
           }}
           onLoadedMetadata={() => {
             setWebcamCanvasOverlaySize();
-            originalSize.current = [
-              webcamRef.current!.video!.offsetWidth,
-              webcamRef.current!.video!.offsetHeight,
-            ] as number[];
+            const video = webcamRef.current!.video!;
+            originalSize.current = props.nativeResolutionCapture
+              ? [video.videoWidth, video.videoHeight]
+              : [video.offsetWidth, video.offsetHeight];
           }}
           forceScreenshotSourceSize={true}
         />
@@ -173,6 +192,16 @@ const ObjectDetectionCamera = (props: {
             position: 'absolute',
             zIndex: 10,
             backgroundColor: 'rgba(0,0,0,0)',
+            // Other modes size the canvas's width/height attributes to
+            // match the video's already-shrunk on-page display size (via
+            // Tailwind's video preflight), so the canvas's rendered size
+            // equals its pixel buffer with no extra CSS needed. Native-
+            // resolution mode's buffer is much larger than that (the raw
+            // camera resolution), so it needs the same responsive-shrink
+            // Tailwind gives <video> applied here explicitly.
+            ...(props.nativeResolutionCapture
+              ? { maxWidth: '100%', height: 'auto' }
+              : {}),
           }}
         ></canvas>
       </div>

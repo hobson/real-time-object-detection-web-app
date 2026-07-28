@@ -27,8 +27,8 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
-    DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String,
-    UniqueConstraint, create_engine, func,
+    JSON, Column, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer,
+    String, Table, Text, UniqueConstraint, create_engine, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -131,6 +131,16 @@ class DatasetLabel(Base):
 # Endpoint request/label logging — this server's own inference traffic
 # ---------------------------------------------------------------------------
 
+# Many-to-many: one image can carry several user-submitted tags, and one
+# tag (e.g. "car") applies across many images.
+submitted_image_tags = Table(
+    "submitted_image_tags",
+    Base.metadata,
+    Column("submitted_image_id", ForeignKey("submitted_images.id"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id"), primary_key=True),
+)
+
+
 class SubmittedImage(Base):
     """One row per image POSTed to `/predict` or `/alpr/predict`, or per
     frame received over `/alpr/ws`."""
@@ -140,6 +150,12 @@ class SubmittedImage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Small (max 128px) JPEG rendered from the full image at capture time
+    # (see persist.py's _store_image) - lets the admin list view show a
+    # preview without decoding the full-resolution original per row. Null
+    # for images stored before this column existed, or if thumbnailing
+    # failed (e.g. Pillow couldn't decode the bytes).
+    thumbnail_path: Mapped[str | None] = mapped_column(String(1024))
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     content_type: Mapped[str | None] = mapped_column(String(64))
@@ -148,6 +164,44 @@ class SubmittedImage(Base):
     client_ip: Mapped[str | None] = mapped_column(String(64))
     inference_time_ms: Mapped[float | None] = mapped_column(Float)
     status_code: Mapped[int | None] = mapped_column(Integer)
+    # Capture context: any client-supplied GPS/orientation/acceleration/
+    # camera-facing data sent alongside the image over multipart (see
+    # request_parsing.py), merged with server-derived data added by
+    # persist.py's _build_capture_metadata - EXIF pulled from the image
+    # bytes (camera make/model/focal length/GPS, when present) and which
+    # host ran inference. A single flexible JSON blob rather than a column
+    # per field, since this server has no migration tooling (see
+    # curation.py's module docstring) and the exact fields keep evolving.
+    # Deliberately does NOT include detection results - see
+    # detection_metadata below; the two are about different things (the
+    # capture device/environment vs. the model's output) and were split
+    # into separate columns so querying/indexing one doesn't drag in the
+    # other.
+    capture_metadata: Mapped[dict | None] = mapped_column(JSON)
+    # The YOLO-side counterpart to capture_metadata: a summary of what was
+    # detected (see persist.py's _detection_summary) - `{"count": int,
+    # "classes": {class_name: count}}`. The full per-detection data (boxes,
+    # confidence, etc.) already lives in DetectionLabel rows below; this is
+    # just a cheap denormalized summary for admin display/search without a
+    # join. Recomputed only at persist time and never mutated afterwards -
+    # DetectionLabelView has no column_editable_list, so there's no path
+    # that could let this drift from the rows it summarizes; don't add
+    # DetectionLabel editing without revisiting this.
+    detection_metadata: Mapped[dict | None] = mapped_column(JSON)
+    # Generated after the fact by describe.py's background queue (a
+    # multimodal LLM call is way too slow to run inline with /predict) - an
+    # accessibility-alt-text-style caption plus keywords. Editable in the
+    # admin (see curation.py) since the model's wording won't always be
+    # exactly what a curator wants. Null until the background job gets to
+    # it, or if that job hasn't been run at all yet (see describe.py's
+    # `main()` for backfilling existing rows).
+    description: Mapped[str | None] = mapped_column(Text)
+    # Aggregate of this image's DetectionLabel rows' cross_model_agreement
+    # (see that column's docstring) - mean agreement across labels that have
+    # a score, or null if this image has no scored labels yet (never 0 -
+    # "not yet scored" and "scored as untrustworthy" must stay distinguishable,
+    # since the former shouldn't surface in a "worst labels" review queue).
+    label_quality_score: Mapped[float | None] = mapped_column(Float)
     received_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -155,13 +209,18 @@ class SubmittedImage(Base):
     detections: Mapped[list["DetectionLabel"]] = relationship(
         "DetectionLabel", back_populates="submitted_image", cascade="all, delete-orphan"
     )
+    tags: Mapped[list["Tag"]] = relationship(
+        "Tag", secondary=submitted_image_tags, back_populates="images"
+    )
 
     def __repr__(self) -> str:
         return f"<SubmittedImage {self.id} endpoint={self.endpoint!r} sha256={self.sha256[:8]}>"
 
 
 class DetectionLabel(Base):
-    """One row per detection an endpoint returned for a `SubmittedImage`.
+    """One row per detection an endpoint returned for a `SubmittedImage`,
+    OR per detection a client attached to its own upload (`source`
+    distinguishes the two - see request_parsing.py's `client_detections`).
 
     OCR fields (`plate_text`, `ocr_confidence`, `region`,
     `region_confidence`) are populated only by `/alpr/predict`/`/alpr/ws`
@@ -187,13 +246,64 @@ class DetectionLabel(Base):
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
     region: Mapped[str | None] = mapped_column(String(16))
     region_confidence: Mapped[float | None] = mapped_column(Float)
+    # "server" (default) for detections this server itself computed,
+    # "client" for a detection payload the caller attached to its own
+    # multipart upload (e.g. a phone that already ran in-browser YOLO and
+    # wants both its own and the server's results recorded side by side).
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="server", server_default="server"
+    )
+    # Distinct from `source` above, which is about *who computed this at
+    # request time* (server vs. a client's own upload) - label_source is
+    # about *how this label came to exist at all*: "machine" (a model
+    # produced it - see model_name for which one) or "human_dataset" (ground
+    # truth copied in from a human-curated dataset like KITTI/COCO, see
+    # dataset_id for which one). Needed once training data got loaded into
+    # this same table/schema (see training/db_load_training_images.py) -
+    # `source` alone can't distinguish "KITTI's own ground truth" from "a
+    # model's pseudo-label," both of which land here as ordinary rows.
+    label_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="machine", server_default="machine"
+    )
+    dataset_id: Mapped[int | None] = mapped_column(ForeignKey("datasets.id"))
+    # Fraction of independent reference models (see
+    # training/compute_label_confidence.py) whose own fresh detection over
+    # this image confirms this label (IoU>=0.5 + matching class). Null until
+    # that script has scored this row; 0.0 is a real "no model agrees with
+    # this label" result, so the two must stay distinguishable.
+    cross_model_agreement: Mapped[float | None] = mapped_column(Float)
 
     submitted_image: Mapped[SubmittedImage] = relationship(
         "SubmittedImage", back_populates="detections"
     )
+    dataset: Mapped[Dataset | None] = relationship("Dataset")
 
     def __repr__(self) -> str:
         return f"<DetectionLabel {self.id} class={self.class_name} plate={self.plate_text!r}>"
+
+
+class Tag(Base):
+    """A user-submitted label for a SubmittedImage (e.g. "flower", "license
+    tag", "NYC") - many-to-many via submitted_image_tags, since one image
+    can carry several tags and one tag applies across many images.
+
+    Deliberately case-sensitive and space-permitting (plain String equality
+    and uniqueness, no normalization/lowercasing) - a curator's own
+    vocabulary (e.g. "NYC" vs "nyc", "license tag") shouldn't be silently
+    mangled.
+    """
+
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+
+    images: Mapped[list[SubmittedImage]] = relationship(
+        "SubmittedImage", secondary=submitted_image_tags, back_populates="tags"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Tag {self.id} {self.name!r}>"
 
 
 # ---------------------------------------------------------------------------

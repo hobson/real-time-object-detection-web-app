@@ -81,3 +81,10 @@ export const yoloClasses: string[] = [
   "hair drier",
   "toothbrush",
 ];
+
+// Single-class label set for models/yolo-v9-t-384-license-plate-end2end.onnx
+// (from fast-alpr's open-image-models hub, same detector inference-server/
+// alpr.py runs server-side) - a plate-only detector, not one of the 80 COCO
+// classes above, so it gets its own tiny class array rather than an entry
+// appended to yoloClasses.
+export const licensePlateClasses: string[] = ["license_plate"];

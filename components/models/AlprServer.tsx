@@ -1,5 +1,6 @@
 import ObjectDetectionCamera from '../ObjectDetectionCamera';
 import { useEffect, useRef, useState } from 'react';
+import { INFERENCE_ENDPOINT } from '../../utils/inferenceEndpoint';
 
 // License plate detection + OCR, server-side only (there is no in-browser
 // equivalent of Yolo.tsx for this - the OCR model makes a WASM download
@@ -15,10 +16,6 @@ import { useEffect, useRef, useState } from 'react';
 // once for the whole session and lets the server push results back the
 // moment they're ready. See inference-server/alpr.py's module docstring
 // for the full reasoning.
-
-const INFERENCE_ENDPOINT =
-  process.env.NEXT_PUBLIC_INFERENCE_URL ||
-  'https://taco.tail9f615d.ts.net:8443/infer';
 
 const WS_ENDPOINT = INFERENCE_ENDPOINT.replace(/^http/, 'ws') + '/alpr/ws';
 

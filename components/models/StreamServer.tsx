@@ -1,15 +1,18 @@
 import ObjectDetectionCamera from '../ObjectDetectionCamera';
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useNotifyDetection } from '../../utils/notify';
 import { INFERENCE_ENDPOINT } from '../../utils/inferenceEndpoint';
 import { Detection } from '../../utils/detectionTypes';
 
-// Alternative to Yolo.tsx: instead of downloading a ~20MB wasm runtime +
-// model and running inference in the browser, capture a frame and post it
-// to a small inference server (see /inference-server) that runs the same
-// ONNX models with the same postprocessing, server-side. Trades a one-time
-// large download for a small recurring per-frame upload - see CLAUDE.md
-// ("Server-side inference") for the tradeoffs that motivated this.
+// Like YoloServer.tsx, but captures full native camera resolution (instead
+// of the on-page display size) and self-paces to whatever frame rate the
+// upload + server round trip can actually sustain, rather than firing a
+// request as fast as the live-detection loop allows. Full-resolution JPEGs
+// are much bigger than the small display-resolution frames the other
+// server modes send, so a fixed interval (like AlprServer.tsx's 1s) would
+// either be too conservative on a fast link or still overload a slow one -
+// adaptive pacing tracks the actual measured round trip instead of
+// guessing a fixed number up front.
 
 const MODELS = [
   'yolo12n.onnx',
@@ -20,13 +23,23 @@ const MODELS = [
   'yolov7-tiny_640x640.onnx',
 ];
 
-// The inference server itself is small and fast to reach (no large
-// download), so a much shorter timeout/retry budget than the client-side
-// model-loading path is appropriate here.
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const MAX_HEALTH_CHECK_ATTEMPTS = 5;
 const retryBackoffMs = (attempt: number) =>
   Math.min(15_000, 2_000 * 2 ** (attempt - 1));
+
+// The 1-6 fps band this mode is allowed to settle into. Below 1fps isn't
+// worth calling "streaming" any more; above 6fps there's no benefit to a
+// full-resolution frame (a small display-resolution frame would do, see
+// YoloServer.tsx) and it risks flooding taco with large uploads.
+const MIN_FPS = 1;
+const MAX_FPS = 6;
+const MAX_INTERVAL_MS = 1000 / MIN_FPS;
+const MIN_INTERVAL_MS = 1000 / MAX_FPS;
+// Exponential-moving-average weight for folding each new round-trip
+// measurement into the pacing interval - smooths out one-off network
+// blips without ignoring a sustained speed change for too long.
+const INTERVAL_SMOOTHING = 0.5;
 
 const extractErrorDetail = (e: unknown): string =>
   e instanceof Error
@@ -37,7 +50,7 @@ const extractErrorDetail = (e: unknown): string =>
     ? String((e as { message: unknown }).message)
     : JSON.stringify(e);
 
-const YoloServer = (props: any) => {
+const StreamServer = (props: any) => {
   const [modelIndex, setModelIndex] = useState(0);
   const modelName = MODELS[modelIndex];
   const [ready, setReady] = useState(false);
@@ -50,9 +63,13 @@ const YoloServer = (props: any) => {
   const [retryCount, setRetryCount] = useState(0);
   const notifyDetection = useNotifyDetection();
 
-  // Confirms the inference server is actually reachable before enabling
-  // the capture/live-detection buttons, with the same retry-with-backoff
-  // shape as the client-side model loader (just much shorter budgets).
+  // Starting guess before any round trip has been measured - refined
+  // toward whatever the link/server can actually sustain after the first
+  // frame (see the EMA update in detect() below).
+  const intervalMsRef = useRef((MIN_INTERVAL_MS + MAX_INTERVAL_MS) / 2);
+  const lastSendAtRef = useRef(0);
+  const [currentFps, setCurrentFps] = useState<number | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setReady(false);
@@ -141,10 +158,20 @@ const YoloServer = (props: any) => {
   };
 
   const detect = async (ctx: CanvasRenderingContext2D): Promise<number> => {
+    const sinceLastSend = Date.now() - lastSendAtRef.current;
+    if (sinceLastSend < intervalMsRef.current) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, intervalMsRef.current - sinceLastSend)
+      );
+    }
+
     const blob: Blob | null = await new Promise((resolve) =>
-      ctx.canvas.toBlob(resolve, 'image/jpeg', 0.85)
+      ctx.canvas.toBlob(resolve, 'image/jpeg', 0.9)
     );
     if (!blob) return 0;
+
+    const requestStart = Date.now();
+    lastSendAtRef.current = requestStart;
 
     const res = await fetch(
       `${INFERENCE_ENDPOINT}/predict?model=${encodeURIComponent(modelName)}`,
@@ -155,6 +182,20 @@ const YoloServer = (props: any) => {
     }
     const result: { inferenceTimeMs: number; detections: Detection[] } =
       await res.json();
+
+    // Pace future frames to whatever this round trip (upload + inference +
+    // download, not just the server's own inferenceTimeMs) actually took,
+    // smoothed and clamped to the 1-6fps band.
+    const roundTripMs = Date.now() - requestStart;
+    intervalMsRef.current = Math.min(
+      MAX_INTERVAL_MS,
+      Math.max(
+        MIN_INTERVAL_MS,
+        INTERVAL_SMOOTHING * roundTripMs +
+          (1 - INTERVAL_SMOOTHING) * intervalMsRef.current
+      )
+    );
+    setCurrentFps(Math.round((1000 / intervalMsRef.current) * 10) / 10);
 
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     const detectedClasses: string[] = [];
@@ -199,9 +240,12 @@ const YoloServer = (props: any) => {
       onRetrySession={retrySessionLoad}
       changeCurrentModelResolution={changeModel}
       currentModelResolution={[0, 0]}
-      modelName={modelName}
+      nativeResolutionCapture={true}
+      modelName={`${modelName} - full-res stream${
+        currentFps ? ` (~${currentFps} fps)` : ' (1-6 fps, adaptive)'
+      }`}
     />
   );
 };
 
-export default YoloServer;
+export default StreamServer;

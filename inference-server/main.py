@@ -10,17 +10,18 @@ import os
 import time
 from pathlib import Path
 
-import numpy as np
 import onnxruntime as ort
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 
 from alpr import router as alpr_router
+from describe import enqueue_description, start_worker
 from limits import validate_body_size
 from persist import persist_submission
-from postprocess import POSTPROCESS_MAP
+from postprocess import POSTPROCESS_MAP, preprocess
+from request_parsing import IMAGE_UPLOAD_OPENAPI_EXTRA, parse_image_and_metadata
 
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", Path(__file__).parent.parent / "models"))
 
@@ -61,6 +62,14 @@ app.add_middleware(
 app.include_router(alpr_router)
 
 
+@app.on_event("startup")
+async def _start_background_workers():
+    # Drains describe.py's background description queue - see its module
+    # docstring for why this runs out-of-band instead of inline with
+    # /predict.
+    start_worker()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -71,16 +80,28 @@ def models():
     return {"models": list(RES_TO_MODEL.keys()), "default": DEFAULT_MODEL}
 
 
-@app.post("/predict")
-async def predict(
-    request: Request,
-    model: str = Query(DEFAULT_MODEL),
-    body: bytes = Body(..., media_type="image/jpeg"),
-):
+@app.post("/predict", openapi_extra=IMAGE_UPLOAD_OPENAPI_EXTRA)
+async def predict(request: Request, model: str = Query(DEFAULT_MODEL)):
+    """Run general object detection on one image.
+
+    **Request body** - either:
+    - raw JPEG/PNG bytes (`Content-Type: image/jpeg`), the original
+      contract, e.g. `curl --data-binary @photo.jpg -H "Content-Type:
+      image/jpeg" ".../predict"`; or
+    - `multipart/form-data` with an `image` file part and an optional
+      `metadata` JSON string part carrying GPS/device-orientation/
+      acceleration/camera-facing data and/or the client's own YOLO
+      detections (key `client_detections`, same shape as this endpoint's
+      own `detections` response field) - see docs/user-manual.md.
+
+    Both shapes return the same JSON response.
+    """
     if model not in RES_TO_MODEL:
         raise HTTPException(status_code=400, detail=f"Unknown model {model}")
 
+    body, metadata, image_content_type = await parse_image_and_metadata(request)
     validate_body_size(body)
+    client_detections = metadata.pop("client_detections", None) if metadata else None
 
     try:
         image = Image.open(io.BytesIO(body)).convert("RGB")
@@ -88,9 +109,7 @@ async def predict(
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 
     resolution = RES_TO_MODEL[model]
-    resized = image.resize(resolution, Image.Resampling.BILINEAR)
-    data = np.asarray(resized, dtype=np.float32) / 255.0  # HWC
-    tensor = np.transpose(data, (2, 0, 1))[np.newaxis, ...].astype(np.float32)  # NCHW
+    tensor = preprocess(image, resolution)
 
     session = get_session(model)
     input_name = session.get_inputs()[0].name
@@ -101,12 +120,12 @@ async def predict(
 
     detections = POSTPROCESS_MAP[model](output, resolution)
 
-    persist_submission(
+    submitted_image_id = persist_submission(
         image_bytes=body,
         endpoint="/predict",
         width=image.width,
         height=image.height,
-        content_type=request.headers.get("content-type"),
+        content_type=image_content_type,
         model_name=model,
         client_ip=request.client.host if request.client else None,
         inference_time_ms=inference_ms,
@@ -115,7 +134,11 @@ async def predict(
             {"class_name": d["class"], "confidence": d["confidence"], "box": d["box"]}
             for d in detections
         ],
+        capture_metadata=metadata,
+        client_detections=client_detections,
+        image=image,
     )
+    enqueue_description(submitted_image_id, body, image_content_type)
 
     return JSONResponse(
         {

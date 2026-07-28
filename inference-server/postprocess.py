@@ -1,11 +1,25 @@
-"""Per-model-family postprocessing, ported from components/models/Yolo.tsx
-so server-side detection behavior matches the client-side WASM version.
+"""Per-model-family preprocessing/postprocessing, ported from
+components/models/Yolo.tsx so server-side detection behavior matches the
+client-side WASM version.
 """
 import numpy as np
+from PIL import Image
 
 from yolo_classes import YOLO_CLASSES
 
-CONFIDENCE_THRESHOLD = 0.25
+# Detections below this score are dropped entirely (not returned to the
+# client at all) - kept in sync with MIN_CONFIDENCE in components/models/
+# Yolo.tsx so client-side and server-side detection behavior matches.
+CONFIDENCE_THRESHOLD = 0.5
+
+
+def preprocess(image: Image.Image, resolution: tuple[int, int]) -> np.ndarray:
+    """Resize + normalize an image into the NCHW float32 tensor every model
+    here expects - shared by main.py's /predict and
+    test_kitti_detection.py so both run models identically."""
+    resized = image.resize(resolution, Image.Resampling.BILINEAR)
+    data = np.asarray(resized, dtype=np.float32) / 255.0  # HWC
+    return np.transpose(data, (2, 0, 1))[np.newaxis, ...].astype(np.float32)  # NCHW
 
 
 def _to_result(class_id, confidence, box, model_resolution):
@@ -26,10 +40,15 @@ def _to_result(class_id, confidence, box, model_resolution):
 
 
 def postprocess_yolov7(output: np.ndarray, model_resolution):
-    # [det_num, 7]: batch_id, x0, y0, x1, y1, cls_id, score - already NMS'd
+    # [det_num, 7]: batch_id, x0, y0, x1, y1, cls_id, score - already NMS'd,
+    # but NMS doesn't guarantee a minimum score, and output isn't
+    # necessarily sorted, so filter rather than break (matches the client's
+    # postprocessYolov7 continue-not-break).
     results = []
     for row in output:
         _, x0, y0, x1, y1, cls_id, score = row
+        if score < CONFIDENCE_THRESHOLD:
+            continue
         results.append(
             _to_result(int(cls_id), score, (x0, y0, x1, y1), model_resolution)
         )

@@ -53,9 +53,13 @@ def main() -> None:
     args = parser.parse_args()
 
     cache = scan_cache_dir()
+    # Split max_workers across concurrently-fetched repos so total in-flight
+    # HTTP requests stays bounded at args.max_workers instead of multiplying
+    # by len(repo_ids).
+    per_repo_workers = max(1, args.max_workers // len(args.repo_ids))
     with ThreadPoolExecutor(max_workers=len(args.repo_ids)) as pool:
         pool.map(lambda repo_id: fetch(repo_id, args.local_dir_base, args.repo_type,
-                                        args.max_workers, cache),
+                                        per_repo_workers, cache),
                  args.repo_ids)
 
 

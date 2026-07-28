@@ -3,11 +3,18 @@ import { Tensor } from 'onnxruntime-web';
 import ops from 'ndarray-ops';
 import ObjectDetectionCamera from '../ObjectDetectionCamera';
 import { round } from 'lodash';
-import { yoloClasses } from '../../data/yolo_classes';
+import { yoloClasses, licensePlateClasses } from '../../data/yolo_classes';
 import { useState } from 'react';
 import { useEffect } from 'react';
 import { runModelUtils } from '../../utils';
 import { useNotifyDetection } from '../../utils/notify';
+import { useAutoAlprSubmit } from '../../utils/autoAlprSubmit';
+import { Detection } from '../../utils/detectionTypes';
+
+// Detections below this score are treated as noise, not just visually
+// suppressed - they're excluded from notifications/auto-ALPR-submit too
+// (see the onDetections callers), not only from the drawn boxes.
+const MIN_CONFIDENCE = 0.5;
 
 const RES_TO_MODEL: [number[], string][] = [
   [[256, 256], 'yolo12n.onnx'],
@@ -16,7 +23,35 @@ const RES_TO_MODEL: [number[], string][] = [
   [[256, 256], 'yolov7-tiny_256x256.onnx'],
   [[320, 320], 'yolov7-tiny_320x320.onnx'],
   [[640, 640], 'yolov7-tiny_640x640.onnx'],
+  [[384, 384], 'yolo-v9-t-384-license-plate-end2end.onnx'],
 ];
+
+// Which class-name array each model's cls_id indexes into. Every COCO
+// model shares the same 80-class yoloClasses; the plate detector is a
+// separate, single-class model (see fast-alpr/open_image_models - the
+// same detector inference-server/alpr.py runs server-side) and needs its
+// own 1-entry array instead of a slot in yoloClasses.
+const MODEL_CLASSES: Record<string, string[]> = {
+  'yolo-v9-t-384-license-plate-end2end.onnx': licensePlateClasses,
+};
+const classesForModel = (modelName: string) =>
+  MODEL_CLASSES[modelName] ?? yoloClasses;
+
+// Shared by both postprocess functions below - box is in canvas-pixel
+// space (already scaled by dx/dy), normalized here to 0-1.
+const toDetection = (
+  cls: string,
+  confidence: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  canvas: HTMLCanvasElement
+): Detection => ({
+  class: cls,
+  confidence,
+  box: [x0 / canvas.width, y0 / canvas.height, x1 / canvas.width, y1 / canvas.height],
+});
 
 // taco is served over a Tailscale Funnel, which relays all traffic through
 // Tailscale's infrastructure rather than a direct connection - measured as
@@ -56,6 +91,7 @@ const Yolo = (props: any) => {
   const [retryingIn, setRetryingIn] = useState<number | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const notifyDetection = useNotifyDetection();
+  const autoAlprSubmit = useAutoAlprSubmit();
 
   useEffect(() => {
     let cancelled = false;
@@ -248,13 +284,18 @@ const Yolo = (props: any) => {
     'yolov7-tiny_256x256.onnx': postprocessYolov7,
     'yolov7-tiny_320x320.onnx': postprocessYolov7,
     'yolov7-tiny_640x640.onnx': postprocessYolov7,
+    // yolo-v9 "end2end" export bakes NMS in and outputs the same
+    // [det_num, 7] layout as yolov7-tiny's export, just with only ever
+    // cls_id=0 (see classesForModel above for the label that maps to).
+    'yolo-v9-t-384-license-plate-end2end.onnx': postprocessYolov7,
   };
 
   const postprocess = async (
     tensor: Tensor,
     inferenceTime: number,
     ctx: CanvasRenderingContext2D,
-    modelName: string
+    modelName: string,
+    isSingleCapture: boolean
   ) => {
     // Output tensor of yolov7-tiny is [det_num, 7]
     // while yolov10n/yolo11n/yolo12n are [1, 300, 6] - the yolo11/12 .onnx
@@ -267,19 +308,30 @@ const Yolo = (props: any) => {
 
     if (modelName in postprocessMap) {
       console.log('Using postprocess for', modelName);
-      postprocessMap[modelName](ctx, modelResolution, tensor, conf2color, (detectedClasses) =>
-        notifyDetection(ctx, detectedClasses)
+      postprocessMap[modelName](
+        ctx,
+        modelResolution,
+        tensor,
+        conf2color,
+        (detections) => {
+          notifyDetection(ctx, detections.map((d) => d.class));
+          autoAlprSubmit(ctx, detections, isSingleCapture);
+        },
+        classesForModel(modelName)
       );
     }
   };
 
-  const detect = async (ctx: CanvasRenderingContext2D): Promise<number> => {
+  const detect = async (
+    ctx: CanvasRenderingContext2D,
+    opts: { isSingleCapture: boolean }
+  ): Promise<number> => {
     const data = preprocess(ctx);
     const [outputTensor, inferenceTime] = await runModelUtils.runModel(
       session,
       data
     );
-    await postprocess(outputTensor, inferenceTime, ctx, modelName);
+    await postprocess(outputTensor, inferenceTime, ctx, modelName, opts.isSingleCapture);
     return inferenceTime;
   };
 
@@ -309,7 +361,8 @@ type PostprocessFunction = (
   modelResolution: number[],
   tensor: Tensor,
   conf2color: (conf: number) => string,
-  onDetections: (detectedClasses: string[]) => void
+  onDetections: (detections: Detection[]) => void,
+  classNames: string[]
 ) => void;
 
 const postprocessYolov10: PostprocessFunction = (
@@ -317,27 +370,32 @@ const postprocessYolov10: PostprocessFunction = (
   modelResolution: number[],
   tensor: Tensor,
   conf2color: (conf: number) => string,
-  onDetections: (detectedClasses: string[]) => void
+  onDetections: (detections: Detection[]) => void,
+  classNames: string[]
 ) => {
   const dx = ctx.canvas.width / modelResolution[0];
   const dy = ctx.canvas.height / modelResolution[1];
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-  const detectedClasses: string[] = [];
+  const detections: Detection[] = [];
   let x0, y0, x1, y1, cls_id, score;
   // yolov10n output tensor is [1, all_boxes, 6]
   // console.log(tensor.dims);
   for (let i = 0; i < tensor.dims[1]; i += 6) {
     [x0, y0, x1, y1, score, cls_id] = tensor.data.slice(i, i + 6);
-    if ((score as any) < 0.25) {
+    if ((score as any) < MIN_CONFIDENCE) {
+      // pre-sorted descending, so nothing further can pass either
       break;
     }
-    detectedClasses.push(yoloClasses[cls_id as any]);
 
     // scale to canvas size
     [x0, x1] = [x0, x1].map((x: any) => x * dx);
     [y0, y1] = [y0, y1].map((x: any) => x * dy);
+
+    detections.push(
+      toDetection(classNames[cls_id as any], score as any, x0, y0, x1, y1, ctx.canvas)
+    );
 
     [x0, y0, x1, y1, cls_id] = [x0, y0, x1, y1, cls_id].map((x: any) =>
       round(x)
@@ -345,8 +403,8 @@ const postprocessYolov10: PostprocessFunction = (
 
     [score] = [score].map((x: any) => round(x * 100, 1));
     const label =
-      yoloClasses[cls_id].toString()[0].toUpperCase() +
-      yoloClasses[cls_id].toString().substring(1) +
+      classNames[cls_id].toString()[0].toUpperCase() +
+      classNames[cls_id].toString().substring(1) +
       ' ' +
       score.toString() +
       '%';
@@ -364,7 +422,7 @@ const postprocessYolov10: PostprocessFunction = (
     ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
   }
 
-  onDetections(detectedClasses);
+  onDetections(detections);
 };
 
 const postprocessYolov7: PostprocessFunction = (
@@ -372,13 +430,14 @@ const postprocessYolov7: PostprocessFunction = (
   modelResolution: number[],
   tensor: Tensor,
   conf2color: (conf: number) => string,
-  onDetections: (detectedClasses: string[]) => void
+  onDetections: (detections: Detection[]) => void,
+  classNames: string[]
 ) => {
   const dx = ctx.canvas.width / modelResolution[0];
   const dy = ctx.canvas.height / modelResolution[1];
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  const detectedClasses: string[] = [];
+  const detections: Detection[] = [];
   let batch_id, x0, y0, x1, y1, cls_id, score;
   // Output tensor of yolov7-tiny is [det_num, 7]
   // console.log(tensor.dims);
@@ -387,11 +446,19 @@ const postprocessYolov7: PostprocessFunction = (
       i * 7,
       i * 7 + 7
     );
-    detectedClasses.push(yoloClasses[cls_id as any]);
+    if ((score as any) < MIN_CONFIDENCE) {
+      // not guaranteed sorted (unlike postprocessYolov10), so skip rather
+      // than break
+      continue;
+    }
 
     // scale to canvas size
     [x0, x1] = [x0, x1].map((x: any) => x * dx);
     [y0, y1] = [y0, y1].map((x: any) => x * dy);
+
+    detections.push(
+      toDetection(classNames[cls_id as any], score as any, x0, y0, x1, y1, ctx.canvas)
+    );
 
     [x0, y0, x1, y1, cls_id] = [x0, y0, x1, y1, cls_id].map((x: any) =>
       round(x)
@@ -399,8 +466,8 @@ const postprocessYolov7: PostprocessFunction = (
 
     [score] = [score].map((x: any) => round(x * 100, 1));
     const label =
-      yoloClasses[cls_id].toString()[0].toUpperCase() +
-      yoloClasses[cls_id].toString().substring(1) +
+      classNames[cls_id].toString()[0].toUpperCase() +
+      classNames[cls_id].toString().substring(1) +
       ' ' +
       score.toString() +
       '%';
@@ -418,5 +485,5 @@ const postprocessYolov7: PostprocessFunction = (
     ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
   }
 
-  onDetections(detectedClasses);
+  onDetections(detections);
 };
