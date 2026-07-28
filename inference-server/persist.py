@@ -241,7 +241,22 @@ def persist_submission(
         return None
 
 
-def _detection_label(submitted_image_id: int, det: dict, model_name: str | None, *, source: str) -> DetectionLabel:
+def _detection_label(
+    submitted_image_id: int,
+    det: dict,
+    model_name: str | None,
+    *,
+    source: str,
+    label_source: str = "machine",
+    dataset_id: int | None = None,
+) -> DetectionLabel:
+    """`label_source`/`dataset_id` default to "every detection this server
+    computes is machine-produced, not from a curated dataset" - true for
+    every existing caller (main.py/alpr.py). training/db_load_training_
+    images.py is the only caller that passes label_source="human_dataset"
+    (with dataset_id set) for ground-truth boxes copied in from KITTI/
+    COCO128/license_plates - see orm.py's DetectionLabel.label_source
+    docstring for why this is a separate concept from `source` above."""
     x_center, y_center, box_width, box_height = _to_center_wh(det["box"])
     return DetectionLabel(
         submitted_image_id=submitted_image_id,
@@ -258,6 +273,8 @@ def _detection_label(submitted_image_id: int, det: dict, model_name: str | None,
         region=det.get("region"),
         region_confidence=det.get("region_confidence"),
         source=source,
+        label_source=label_source,
+        dataset_id=dataset_id,
     )
 
 

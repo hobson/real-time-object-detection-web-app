@@ -196,6 +196,12 @@ class SubmittedImage(Base):
     # it, or if that job hasn't been run at all yet (see describe.py's
     # `main()` for backfilling existing rows).
     description: Mapped[str | None] = mapped_column(Text)
+    # Aggregate of this image's DetectionLabel rows' cross_model_agreement
+    # (see that column's docstring) - mean agreement across labels that have
+    # a score, or null if this image has no scored labels yet (never 0 -
+    # "not yet scored" and "scored as untrustworthy" must stay distinguishable,
+    # since the former shouldn't surface in a "worst labels" review queue).
+    label_quality_score: Mapped[float | None] = mapped_column(Float)
     received_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -247,10 +253,30 @@ class DetectionLabel(Base):
     source: Mapped[str] = mapped_column(
         String(16), nullable=False, default="server", server_default="server"
     )
+    # Distinct from `source` above, which is about *who computed this at
+    # request time* (server vs. a client's own upload) - label_source is
+    # about *how this label came to exist at all*: "machine" (a model
+    # produced it - see model_name for which one) or "human_dataset" (ground
+    # truth copied in from a human-curated dataset like KITTI/COCO, see
+    # dataset_id for which one). Needed once training data got loaded into
+    # this same table/schema (see training/db_load_training_images.py) -
+    # `source` alone can't distinguish "KITTI's own ground truth" from "a
+    # model's pseudo-label," both of which land here as ordinary rows.
+    label_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="machine", server_default="machine"
+    )
+    dataset_id: Mapped[int | None] = mapped_column(ForeignKey("datasets.id"))
+    # Fraction of independent reference models (see
+    # training/compute_label_confidence.py) whose own fresh detection over
+    # this image confirms this label (IoU>=0.5 + matching class). Null until
+    # that script has scored this row; 0.0 is a real "no model agrees with
+    # this label" result, so the two must stay distinguishable.
+    cross_model_agreement: Mapped[float | None] = mapped_column(Float)
 
     submitted_image: Mapped[SubmittedImage] = relationship(
         "SubmittedImage", back_populates="detections"
     )
+    dataset: Mapped[Dataset | None] = relationship("Dataset")
 
     def __repr__(self) -> str:
         return f"<DetectionLabel {self.id} class={self.class_name} plate={self.plate_text!r}>"

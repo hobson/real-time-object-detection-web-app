@@ -7,6 +7,14 @@ dependencies = [
     "ultralytics>=8.3",
     "requests>=2.31",
     "huggingface_hub>=0.24",
+    # db_load_training_images.py / compute_label_confidence.py /
+    # flag_review_images.py / train_from_db.py import inference-server's
+    # orm.py directly (sys.path insertion, not a package dep) to reuse its
+    # SQLAlchemy models/engine_from_env rather than reimplementing the
+    # schema here - these three give that import what it needs.
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -16,6 +24,8 @@ cpu = ["torch", "torchvision"]
 rocm = ["torch", "torchvision", "pytorch-triton-rocm"]
 # label_app.py only - not needed for fine-tuning itself
 label = ["streamlit>=1.38", "pillow"]
+# db_load_training_images.py's unit tests
+test = ["pytest>=8.0"]
 
 [tool.uv.sources]
 torch = [

@@ -160,8 +160,8 @@ def _tags_formatter(view, context, model, name):
 class SubmittedImageView(_BaseView):
     column_list = [
         "id", "thumbnail_path", "endpoint", "model_name", "sha256", "width",
-        "height", "description", "tags", "inference_time_ms", "status_code",
-        "client_ip", "received_at",
+        "height", "description", "tags", "label_quality_score",
+        "inference_time_ms", "status_code", "client_ip", "received_at",
     ]
     column_labels = {"thumbnail_path": "Thumbnail"}
     column_formatters = {
@@ -179,8 +179,19 @@ class SubmittedImageView(_BaseView):
     # detection_metadata, ...) - "tags.name" is added on top since it's a
     # relationship, not a column, so the auto-deriver can't see it.
     column_searchable_list = [*auto_searchable_columns(SubmittedImage), "tags.name"]
-    column_filters = ["endpoint", "model_name", "status_code", "received_at", "tags"]
+    column_filters = [
+        "endpoint", "model_name", "status_code", "received_at", "tags",
+        "label_quality_score",
+    ]
     column_sortable_list = auto_sortable_columns(SubmittedImage)
+    # Left at received_at (not label_quality_score) - most rows in this table
+    # are ordinary endpoint traffic with a null score (only training-imported
+    # images get scored by compute_label_confidence.py), so defaulting to a
+    # quality-score sort here would bury normal traffic under a wall of
+    # null rows. Sorting by label_quality_score is still available via
+    # column_sortable_list/the URL's ?sort= param when reviewing training
+    # data specifically; training/flag_review_images.py's top-5 report
+    # queries this directly rather than relying on the admin's default sort.
     column_default_sort = ("received_at", True)
     # capture_metadata/detection_metadata are JSON blobs (see orm.py - one's
     # about the capture device/environment, the other's the YOLO output
@@ -204,15 +215,20 @@ class TagView(_BaseView):
 class DetectionLabelView(_BaseView):
     column_list = [
         "id", "submitted_image", "class_name", "confidence", "source",
-        "plate_text", "ocr_confidence", "region", "model_name",
+        "label_source", "dataset", "cross_model_agreement", "plate_text",
+        "ocr_confidence", "region", "model_name",
     ]
     column_searchable_list = auto_searchable_columns(DetectionLabel)
-    column_filters = ["class_name", "model_name", "region", "source"]
+    column_filters = [
+        "class_name", "model_name", "region", "source", "label_source",
+        "dataset", "cross_model_agreement",
+    ]
     column_sortable_list = auto_sortable_columns(DetectionLabel)
     column_default_sort = ("id", False)
     form_columns = [
         "submitted_image", "class_id", "class_name", "x_center", "y_center",
-        "width", "height", "confidence", "model_name", "source", "plate_text",
+        "width", "height", "confidence", "model_name", "source",
+        "label_source", "dataset", "cross_model_agreement", "plate_text",
         "ocr_confidence", "region", "region_confidence",
     ]
 
