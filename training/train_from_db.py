@@ -44,6 +44,7 @@ Usage: python training/train_from_db.py \
     [--epochs 10] [--agreement-threshold 0.67] [--oversample-repeats 3]
 """
 import argparse
+import json
 import random
 import sys
 from pathlib import Path
@@ -233,6 +234,16 @@ def main():
     parser.add_argument("--project", default="runs/license_plate")
     parser.add_argument("--name", default="license_plate_ft_from_db")
     parser.add_argument("--best-path-out", default=None)
+    parser.add_argument(
+        "--patience", type=int, default=15,
+        help="Ultralytics EarlyStopping patience (epochs with no fitness improvement before "
+        "stopping early) - was previously left at ultralytics' own default of 100, which never "
+        "actually triggers within a single --epochs-per-round round (rounds are shorter than "
+        "100 epochs), so every round always ran to completion even after visibly plateauing "
+        "(e.g. round 2's mAP50 oscillating 0.11-0.135 with no trend for 15+ epochs). Lowered so "
+        "a plateaued round frees the machine for the next round/round-boundary reweighting "
+        "sooner instead of burning the remaining epochs for no metric gain.",
+    )
     args = parser.parse_args()
 
     dataset_config = yaml.safe_load((DATASET_DIR / "dataset.yaml").read_text())
@@ -281,6 +292,7 @@ def main():
         name=args.name,
         exist_ok=True,
         device=args.device,
+        patience=args.patience,
     )
 
     best_path = str(model.trainer.save_dir / "weights" / "best.pt")
@@ -292,6 +304,21 @@ def main():
 
     if args.best_path_out:
         Path(args.best_path_out).write_text(best_path)
+
+    # Append-only log across every round/run this repo has ever launched, so
+    # a later round that regresses (see iterative_reweight_train.py's module
+    # docstring re: license_plate's accuracy regressing round 2->3) can be
+    # spotted by comparing against every prior entry here, not just against
+    # "whatever the immediately preceding round produced" - the orchestrator
+    # itself always chains checkpoints forward with no such check.
+    best_f1 = getattr(model.trainer, "_best_f1", None)
+    log_path = Path(args.class_weights_file).parent / "best_checkpoints_log.jsonl" if args.class_weights_file else Path(best_path).parent / "best_checkpoints_log.jsonl"
+    with open(log_path, "a") as f:
+        f.write(json.dumps({
+            "name": args.name, "checkpoint": best_path, "best_f1": best_f1,
+            "current_model_name": args.current_model_name, "epochs": args.epochs,
+            "patience": args.patience, "warmup_epochs": args.warmup_epochs,
+        }) + "\n")
 
 
 if __name__ == "__main__":
