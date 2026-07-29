@@ -312,7 +312,7 @@ def main():
     # "whatever the immediately preceding round produced" - the orchestrator
     # itself always chains checkpoints forward with no such check.
     best_f1 = getattr(model.trainer, "_best_f1", None)
-    log_path = Path(args.class_weights_file).parent / "best_checkpoints_log.jsonl" if args.class_weights_file else Path(best_path).parent / "best_checkpoints_log.jsonl"
+    log_path = Path(best_path).parent / "best_checkpoints_log.jsonl"
     with open(log_path, "a") as f:
         f.write(json.dumps({
             "name": args.name, "checkpoint": best_path, "best_f1": best_f1,
