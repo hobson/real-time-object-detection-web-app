@@ -40,7 +40,7 @@ SearchableMixin / auto_sortable_columns / auto_searchable_columns
 import itertools
 from functools import cached_property
 
-from flask import Flask, send_from_directory, url_for
+from flask import Flask, abort, render_template, send_file, send_from_directory, url_for
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
@@ -49,8 +49,9 @@ from markupsafe import Markup
 
 from flask_admin_toolkit import SearchableMixin, auto_searchable_columns, auto_sortable_columns
 
+from clean_db import abbreviate_hash
 from orm import Annotation, Base, Dataset, Image, LabelSource, Tag
-from persist import THUMBNAIL_DIR
+from persist import STORAGE_DIR, THUMBNAIL_DIR
 
 import os
 
@@ -126,7 +127,8 @@ def _thumbnail_formatter(view, context, model, name):
     if not model.thumbnail_path:
         return ""
     src = url_for("thumbnail_file", filename=f"{model.sha256}.jpg")
-    return Markup(f'<img src="{src}" style="max-height:64px;max-width:64px">')
+    href = url_for("image_view_page", image_id=model.id)
+    return Markup(f'<a href="{href}"><img src="{src}" style="max-height:64px;max-width:64px"></a>')
 
 
 def _description_formatter(view, context, model, name):
@@ -138,6 +140,14 @@ def _description_formatter(view, context, model, name):
 
 def _tags_formatter(view, context, model, name):
     return ", ".join(t.name for t in model.tags) if model.tags else ""
+
+
+def _sha256_formatter(view, context, model, name):
+    """Table cell shows only an abbreviated hash (see clean_db.abbreviate_
+    hash) - the full sha256 is available via this same link's title tooltip
+    and, in full, on the image detail page itself (templates/image_view.html)."""
+    href = url_for("image_view_page", image_id=model.id)
+    return Markup(f'<a href="{href}" title="{model.sha256}">{abbreviate_hash(model.sha256)}</a>')
 
 
 class ImageView(_BaseView):
@@ -152,6 +162,7 @@ class ImageView(_BaseView):
         "thumbnail_path": _thumbnail_formatter,
         "description": _description_formatter,
         "tags": _tags_formatter,
+        "sha256": _sha256_formatter,
     }
     # Inline textarea edit straight from the list view. `training_status` is
     # editable here specifically so a curator can promote a production image
@@ -303,6 +314,52 @@ def create_app(db_url: str | None = None) -> Flask:
     @app.route("/thumbnails/<path:filename>")
     def thumbnail_file(filename):
         return send_from_directory(THUMBNAIL_DIR, filename)
+
+    @app.route("/image/<int:image_id>/full")
+    def image_full_file(image_id):
+        """Serves the full-resolution original, keyed by DB id (not a raw
+        filename in the URL) - looked up server-side via Image.file_path so
+        the route works regardless of the on-disk extension (.jpg/.png)."""
+        image = db.session.get(Image, image_id)
+        if image is None:
+            abort(404)
+        return send_file(image.file_path)
+
+    @app.route("/image/<int:image_id>/view")
+    def image_view_page(image_id):
+        """Full-size image with detection boxes/labels/OCR text drawn on a
+        canvas overlay - client-side JS does the drawing (see
+        templates/image_view.html) so the show/hide toggle and confidence
+        slider redraw instantly with no round trip. Annotation data is
+        embedded directly in the page (one query, no separate JSON
+        endpoint) since this page has exactly one consumer (a human loading
+        it once) - not worth a second route."""
+        image = db.session.get(Image, image_id)
+        if image is None:
+            abort(404)
+        annotations = [
+            {
+                "class_name": a.class_name,
+                # None (ground-truth/human-labeled boxes have no model
+                # confidence) is normalized to 1.0 here - see the template's
+                # confidence-slider docstring for why: a real model
+                # confidence is always <=1.0, so treating "no confidence
+                # concept applies" as the maximum means these boxes stay
+                # visible at every threshold except the slider's own
+                # explicit "hide everything" max value (1.01).
+                "confidence": a.confidence if a.confidence is not None else 1.0,
+                "x_center": a.x_center, "y_center": a.y_center,
+                "width": a.width, "height": a.height,
+                "plate_text": a.plate_text,
+            }
+            for a in image.annotations
+        ]
+        return render_template(
+            "image_view.html",
+            image=image,
+            image_url=url_for("image_full_file", image_id=image.id),
+            annotations=annotations,
+        )
 
     # Tables are created once via `python orm.py` (see docs/user-manual.md
     # §3), not here - this avoids every gunicorn worker re-running DDL

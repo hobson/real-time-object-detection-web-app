@@ -38,7 +38,7 @@ from pathlib import Path
 import onnxruntime as ort
 import yaml
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image as PILImage
 from ultralytics import YOLO
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -55,6 +55,7 @@ from postprocess import preprocess as _onnx_preprocess  # noqa: E402
 from review_confusion_matrix import iou  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from device_check import resolve_device  # noqa: E402
 from model_identity import weights_hash  # noqa: E402
 
 LICENSE_PLATE_CLASS_ID = 80
@@ -76,16 +77,12 @@ def _to_xyxy(cx, cy, w, h) -> tuple[float, float, float, float]:
     return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
 
 
-def _run_model(model: YOLO, image_path: str, imgsz) -> list[tuple[int, tuple]]:
+def _run_model(model: YOLO, image_path: str, imgsz, device: str) -> list[tuple[int, tuple]]:
     """Returns [(unified_class_id, (x0,y0,x1,y1) normalized), ...] for
-    detections above CONF_THRESHOLD.
-
-    device="cpu" is explicit, not incidental: on taco (ROCm-enabled torch),
-    letting ultralytics auto-select the GPU segfaulted the process outright
-    for this model/op combination on that iGPU (gfx1151) - this script runs
-    once over the whole dataset and needs to not crash more than it needs
-    GPU speed, so CPU is the safer default everywhere it runs."""
-    result = model.predict(image_path, imgsz=imgsz, conf=CONF_THRESHOLD, verbose=False, device="cpu")[0]
+    detections above CONF_THRESHOLD. `device` should already be resolved via
+    device_check.resolve_device() - see that module for why this matters on
+    taco specifically."""
+    result = model.predict(image_path, imgsz=imgsz, conf=CONF_THRESHOLD, verbose=False, device=device)[0]
     if result.boxes is None:
         return []
     w, h = result.orig_shape[1], result.orig_shape[0]
@@ -106,7 +103,7 @@ def _run_plate_model(ort_session: ort.InferenceSession, image_path: str) -> list
     preprocess() (a plain square resize), sidestepping ultralytics
     entirely for this one model."""
     input_name = ort_session.get_inputs()[0].name
-    with Image.open(image_path) as img:
+    with PILImage.open(image_path) as img:
         img = img.convert("RGB")
         tensor = _onnx_preprocess(img, PLATE_RESOLUTION)
         output = ort_session.run(None, {input_name: tensor})[0]
@@ -180,6 +177,11 @@ def main():
         "--current-model-name", default=DEFAULT_CURRENT_MODEL_NAME,
         help="model_name to persist this checkpoint's detections under - train_from_db.py's --current-model-name must match.",
     )
+    parser.add_argument(
+        "--device", default="cpu", type=resolve_device,
+        help="Passed to model.predict(device=...) - verified via device_check.resolve_device as part of "
+        "argument parsing itself (type=resolve_device). Default 'cpu'.",
+    )
     args = parser.parse_args()
     source_tags = [s.strip() for s in args.sources.split(",")]
 
@@ -233,7 +235,7 @@ def main():
         for i, submitted in enumerate(images, 1):
             models_and_detections = []
             for model, imgsz, model_name, persist in models:
-                detections = _run_model(model, submitted.file_path, imgsz)
+                detections = _run_model(model, submitted.file_path, imgsz, args.device)
                 models_and_detections.append((model_name, detections))
                 if persist:
                     n = _persist_new_detections(session, submitted, label_source_ids[model_name], detections)

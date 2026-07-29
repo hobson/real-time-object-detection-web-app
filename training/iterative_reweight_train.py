@@ -80,7 +80,12 @@ def main():
     parser.add_argument("--min-weight", type=float, default=0.1)
     parser.add_argument("--max-weight", type=float, default=10.0)
     parser.add_argument("--project", default="runs/license_plate")
-    parser.add_argument("--device", default="cpu", help="Passed to train_from_db.py - see its --device help.")
+    parser.add_argument(
+        "--device", default="cpu",
+        help="Passed to train_from_db.py, compute_class_fn_fp_rates.py, and compute_label_confidence.py "
+        "- each verifies it independently via device_check.resolve_device before use. See train_from_db.py's "
+        "--device help.",
+    )
     parser.add_argument("--cos-lr", action="store_true", help="Passed to train_from_db.py - see its --cos-lr help.")
     parser.add_argument("--warmup-epochs", type=float, default=3.0, help="Passed to train_from_db.py - see its --warmup-epochs help.")
     parser.add_argument("--multi-scale", action="store_true", help="Passed to train_from_db.py - see its --multi-scale help.")
@@ -152,6 +157,7 @@ def main():
             "--min-weight", str(args.min_weight),
             "--max-weight", str(args.max_weight),
             "--out", str(new_weights_path),
+            "--device", args.device,
         ])
 
         new_weights = torch.load(new_weights_path)
@@ -175,6 +181,7 @@ def main():
             sys.executable, "training/compute_label_confidence.py",
             "--current-model", checkpoint,
             "--current-model-name", current_model_name,
+            "--device", args.device,
         ])
 
     print(f"[iterative-reweight] Final checkpoint: {checkpoint}")

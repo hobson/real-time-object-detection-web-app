@@ -65,6 +65,7 @@ from orm import Image, engine_from_env  # noqa: E402
 from review_confusion_matrix import iou  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from device_check import resolve_device  # noqa: E402
 from finetune_license_plate import restore_attention_position_encoding_bias  # noqa: E402
 from train_resume_all_categories import (  # noqa: E402
     DATASET_DIR, GENERATED_VAL_MANIFEST, build_broad_val_manifest,
@@ -167,9 +168,10 @@ def main():
     parser.add_argument("--freeze", type=int, default=0)
     parser.add_argument("--lr0", type=float, default=0.0005)
     parser.add_argument(
-        "--device", default="cpu",
-        help="Passed straight through to model.train(device=...). Default 'cpu' - see the comment "
-        "at the model.train() call below before passing 'cuda'/0.",
+        "--device", default="cpu", type=resolve_device,
+        help="Passed to model.train(device=...) - verified via device_check.resolve_device as part of "
+        "argument parsing itself (type=resolve_device), so a non-cpu request is smoke-tested before use "
+        "and falls back to cpu if it fails, with no separate call a future edit could forget. Default 'cpu'.",
     )
     parser.add_argument(
         "--cos-lr", action="store_true",
@@ -242,10 +244,6 @@ def main():
         project=args.project,
         name=args.name,
         exist_ok=True,
-        # device: default "cpu" - GPU training doesn't work on taco's iGPU
-        # with the currently-installed torch/ROCm build. See
-        # docs/gpu-training-investigation.md for why and current status
-        # before overriding --device.
         device=args.device,
     )
 

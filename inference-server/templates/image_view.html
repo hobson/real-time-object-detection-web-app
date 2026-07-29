@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Image {{ image.id }}</title>
+  <style>
+    body { font-family: sans-serif; background: #222; color: #eee; margin: 0; padding: 16px; }
+    a { color: #6cf; }
+    #controls {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      margin-bottom: 12px; padding: 10px 14px; background: #333; border-radius: 6px;
+    }
+    #controls label { display: flex; align-items: center; gap: 6px; }
+    #confidence-value { font-variant-numeric: tabular-nums; min-width: 3.5em; display: inline-block; }
+    #canvas-wrap { max-width: 100%; overflow: auto; }
+    canvas { max-width: 100%; height: auto; border: 1px solid #444; }
+  </style>
+</head>
+<body>
+  <p><a href="{{ url_for('image.index_view') }}">&larr; back to Images</a></p>
+  <h3>Image {{ image.id }} <small>({{ image.sha256 }})</small></h3>
+
+  <div id="controls">
+    <label><input type="checkbox" id="show-labels" checked> Show labels</label>
+    <label>
+      Min confidence
+      <input type="range" id="confidence-threshold" min="0" max="1.01" step="0.01" value="0">
+      <span id="confidence-value">0.00</span>
+    </label>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script>
+    // Annotations: box fields are normalized 0-1 (YOLO x_center/y_center/
+    // width/height) - scaled against the loaded image's natural pixel size
+    // below, not against `image.width`/`image.height` from the DB (which
+    // can be null/stale), so boxes stay pixel-accurate regardless.
+    const annotations = {{ annotations | tojson }};
+
+    const img = new Image();
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const showLabelsEl = document.getElementById('show-labels');
+    const thresholdEl = document.getElementById('confidence-threshold');
+    const thresholdValueEl = document.getElementById('confidence-value');
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      if (!showLabelsEl.checked) return;
+
+      // threshold=1.01 -> nothing passes (every real confidence is <=1.0,
+      // and null-confidence boxes are normalized to 1.0 server-side);
+      // threshold=0 -> everything passes.
+      const threshold = parseFloat(thresholdEl.value);
+      for (const a of annotations) {
+        if (a.confidence < threshold) continue;
+
+        const x0 = (a.x_center - a.width / 2) * canvas.width;
+        const y0 = (a.y_center - a.height / 2) * canvas.height;
+        const w = a.width * canvas.width;
+        const h = a.height * canvas.height;
+
+        ctx.strokeStyle = '#00ff6a';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x0, y0, w, h);
+
+        const label = a.plate_text
+          ? `${a.class_name} "${a.plate_text}" ${(a.confidence * 100).toFixed(0)}%`
+          : `${a.class_name} ${(a.confidence * 100).toFixed(0)}%`;
+        ctx.font = '14px sans-serif';
+        const metrics = ctx.measureText(label);
+        ctx.fillStyle = 'rgba(0,255,106,0.85)';
+        ctx.fillRect(x0, Math.max(0, y0 - 18), metrics.width + 8, 18);
+        ctx.fillStyle = '#000';
+        ctx.fillText(label, x0 + 4, Math.max(12, y0 - 4));
+      }
+    }
+
+    img.onload = () => {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      draw();
+    };
+    img.src = {{ image_url | tojson }};
+
+    showLabelsEl.addEventListener('change', draw);
+    thresholdEl.addEventListener('input', () => {
+      thresholdValueEl.textContent = parseFloat(thresholdEl.value).toFixed(2);
+      draw();
+    });
+  </script>
+</body>
+</html>
