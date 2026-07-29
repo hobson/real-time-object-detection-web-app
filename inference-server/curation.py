@@ -38,22 +38,19 @@ SearchableMixin / auto_sortable_columns / auto_searchable_columns
     layer.
 """
 import itertools
+import os
 from functools import cached_property
 
+from clean_db import abbreviate_hash
 from flask import Flask, abort, render_template, send_file, send_from_directory, url_for
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
+from flask_admin_toolkit import SearchableMixin, auto_searchable_columns, auto_sortable_columns
 from flask_sqlalchemy import SQLAlchemy
 from markupsafe import Markup
-
-from flask_admin_toolkit import SearchableMixin, auto_searchable_columns, auto_sortable_columns
-
-from clean_db import abbreviate_hash
 from orm import Annotation, Base, Dataset, Image, LabelSource, Tag
-from persist import STORAGE_DIR, THUMBNAIL_DIR
-
-import os
+from persist import THUMBNAIL_DIR
 
 FLASK_SECRET = os.environ.get("FLASK_SECRET", "dev-secret-key-change-in-production")
 

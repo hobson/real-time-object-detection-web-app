@@ -61,15 +61,16 @@ load_dotenv(INFERENCE_SERVER_DIR / ".env")
 sys.path.insert(0, str(INFERENCE_SERVER_DIR))
 sys.path.insert(0, str(TRAINING_DIR))
 
+from device_check import resolve_device  # noqa: E402
+from finetune_license_plate import restore_attention_position_encoding_bias  # noqa: E402
 from orm import Image, engine_from_env  # noqa: E402
 from review_confusion_matrix import iou  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
-
-from device_check import resolve_device  # noqa: E402
-from finetune_license_plate import restore_attention_position_encoding_bias  # noqa: E402
 from train_resume_all_categories import (  # noqa: E402
-    DATASET_DIR, GENERATED_VAL_MANIFEST, build_broad_val_manifest,
-    compute_balanced_class_weights, label_path_for_image,
+    DATASET_DIR,
+    GENERATED_VAL_MANIFEST,
+    build_broad_val_manifest,
+    compute_balanced_class_weights,
 )
 
 GENERATED_DIR = REPO_ROOT / "data" / "external_datasets" / "db_export"

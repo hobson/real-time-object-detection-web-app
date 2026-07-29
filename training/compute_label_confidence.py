@@ -49,14 +49,13 @@ load_dotenv(INFERENCE_SERVER_DIR / ".env")
 sys.path.insert(0, str(INFERENCE_SERVER_DIR))
 sys.path.insert(0, str(Path(__file__).parent))
 
+from device_check import resolve_device  # noqa: E402
+from model_identity import weights_hash  # noqa: E402
 from orm import Annotation, Image, engine_from_env  # noqa: E402
 from persist import _annotation, get_or_create_model_label_source  # noqa: E402
 from postprocess import preprocess as _onnx_preprocess  # noqa: E402
 from review_confusion_matrix import iou  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
-
-from device_check import resolve_device  # noqa: E402
-from model_identity import weights_hash  # noqa: E402
 
 LICENSE_PLATE_CLASS_ID = 80
 NAMES: dict[int, str] = yaml.safe_load((PLATES_DIR / "dataset.yaml").read_text())["names"]
