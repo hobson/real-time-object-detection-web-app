@@ -17,7 +17,7 @@ share the same blind spots):
      improving (default: round3's best.pt, but this must be re-pointed at
      each new round's own checkpoint - see --current-model-name and
      train_from_db.py's docstring for why staying in sync matters) -
-     persisted as new DetectionLabel rows (label_source="machine") if not
+     persisted as new Annotation rows (a model-type LabelSource) if not
      already present.
   2. The standalone license-plate detector (single-class, always outputs
      class 0 - remapped to LICENSE_PLATE_CLASS_ID for comparison/storage)
@@ -49,11 +49,13 @@ load_dotenv(INFERENCE_SERVER_DIR / ".env")
 sys.path.insert(0, str(INFERENCE_SERVER_DIR))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from orm import DetectionLabel, SubmittedImage, engine_from_env  # noqa: E402
-from persist import _detection_label  # noqa: E402
+from orm import Annotation, Image, engine_from_env  # noqa: E402
+from persist import _annotation, get_or_create_model_label_source  # noqa: E402
 from postprocess import preprocess as _onnx_preprocess  # noqa: E402
 from review_confusion_matrix import iou  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
+
+from model_identity import weights_hash  # noqa: E402
 
 LICENSE_PLATE_CLASS_ID = 80
 NAMES: dict[int, str] = yaml.safe_load((PLATES_DIR / "dataset.yaml").read_text())["names"]
@@ -119,40 +121,38 @@ def _run_plate_model(ort_session: ort.InferenceSession, image_path: str) -> list
 
 
 def _persist_new_detections(
-    session: Session, submitted: SubmittedImage, model_name: str, detections: list[tuple[int, tuple]]
+    session: Session, submitted: Image, label_source_id: int, detections: list[tuple[int, tuple]]
 ) -> int:
-    """Adds a DetectionLabel for each fresh detection that doesn't already
-    match (IoU>=0.5, same class) an existing row from this same model_name
-    on this image - keeps reruns from duplicating rows."""
+    """Adds an Annotation for each fresh detection that doesn't already
+    match (IoU>=0.5, same class) an existing row from this same
+    label_source on this image - keeps reruns from duplicating rows."""
     existing = [
         (d.class_id, (d.x_center - d.width / 2, d.y_center - d.height / 2, d.x_center + d.width / 2, d.y_center + d.height / 2))
-        for d in submitted.detections
-        if d.model_name == model_name
+        for d in submitted.annotations
+        if d.label_source_id == label_source_id
     ]
     added = 0
     for cls_id, box in detections:
         if any(cls_id == e_cls and iou(box, e_box) >= IOU_MATCH_THRESHOLD for e_cls, e_box in existing):
             continue
         det = {"class_id": cls_id, "class_name": NAMES.get(cls_id), "box": box}
-        session.add(_detection_label(
-            submitted.id, det, model_name=model_name, source="server", label_source="machine",
-        ))
+        session.add(_annotation(submitted.id, det, label_source_id, source="server"))
         added += 1
     return added
 
 
-def _score_image(session: Session, submitted: SubmittedImage, models_and_detections) -> None:
+def _score_image(session: Session, submitted: Image, models_and_detections) -> None:
     """models_and_detections: [(model_name, [(class_id, box), ...]), ...] -
     every reference model's fresh output for this image, used (regardless
     of whether that model's own output gets persisted) to score every
-    DetectionLabel currently on this image."""
+    Annotation currently on this image."""
     session.flush()
-    # Queried directly rather than via submitted.detections: that
+    # Queried directly rather than via submitted.annotations: that
     # relationship collection was loaded by the original query earlier in
     # main() and does NOT pick up rows _persist_new_detections has since
     # session.add()'ed - flush() sends the INSERTs but doesn't retroactively
     # append them to an already-loaded Python-side collection.
-    labels = session.query(DetectionLabel).filter_by(submitted_image_id=submitted.id).all()
+    labels = session.query(Annotation).filter_by(image_id=submitted.id).all()
     scores = []
     for label in labels:
         label_box = _to_xyxy(label.x_center, label.y_center, label.width, label.height)
@@ -199,11 +199,27 @@ def main():
 
     engine = engine_from_env()
     with Session(engine) as session:
+        # Resolve each persisted model's LabelSource once per run (not per
+        # image) - weights_hash() reads the whole checkpoint file, and the
+        # file doesn't change mid-run. get_or_create_model_label_source
+        # reuses the same row across runs against the same checkpoint.
+        label_source_ids = {
+            model_name: get_or_create_model_label_source(
+                session, model_name, weights_hash=weights_hash(path)
+            ).id
+            for path, _, model_name, persist in reference_models
+            if persist
+        }
+        label_source_ids[PLATE_MODEL_NAME] = get_or_create_model_label_source(
+            session, PLATE_MODEL_NAME, weights_hash=weights_hash(PLATE_CHECKPOINT)
+        ).id
+        session.commit()
+
         images = (
-            session.query(SubmittedImage)
-            .join(SubmittedImage.tags)
-            .filter(SubmittedImage.tags.any())
-            .filter(SubmittedImage.endpoint == "training_import")
+            session.query(Image)
+            .join(Image.tags)
+            .filter(Image.tags.any())
+            .filter(Image.training_status == Image.TRAINING_STATUS_APPROVED)
             .all()
         )
         # Filter to the requested source tags in Python (SQLAlchemy's
@@ -220,13 +236,13 @@ def main():
                 detections = _run_model(model, submitted.file_path, imgsz)
                 models_and_detections.append((model_name, detections))
                 if persist:
-                    n = _persist_new_detections(session, submitted, model_name, detections)
+                    n = _persist_new_detections(session, submitted, label_source_ids[model_name], detections)
                     if n:
                         session.flush()
 
             plate_detections = _run_plate_model(plate_session, submitted.file_path)
             models_and_detections.append((PLATE_MODEL_NAME, plate_detections))
-            n = _persist_new_detections(session, submitted, PLATE_MODEL_NAME, plate_detections)
+            n = _persist_new_detections(session, submitted, label_source_ids[PLATE_MODEL_NAME], plate_detections)
             if n:
                 session.flush()
 

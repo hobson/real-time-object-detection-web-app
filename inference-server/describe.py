@@ -1,6 +1,6 @@
 """Generate accessibility-style image descriptions via a colocated
 multimodal LLM (llama-swap running llama.cpp's server, e.g. on taco) and
-persist them onto SubmittedImage.description.
+persist them onto Image.description.
 
 Why a background queue instead of doing this inline with /predict: a
 vision-LLM call is 1-2 orders of magnitude slower than the YOLO inference
@@ -41,7 +41,7 @@ from pathlib import Path
 import httpx
 
 from db import SessionLocal
-from orm import SubmittedImage
+from orm import Image
 
 logger = logging.getLogger("describe")
 
@@ -98,7 +98,7 @@ def generate_description(image_bytes: bytes, *, content_type: str = "image/jpeg"
 def _update_description(submitted_image_id: int, description: str) -> None:
     session = SessionLocal()
     try:
-        row = session.get(SubmittedImage, submitted_image_id)
+        row = session.get(Image, submitted_image_id)
         if row is not None:
             row.description = description
             session.commit()
@@ -110,7 +110,7 @@ def describe_and_store(
     submitted_image_id: int, image_bytes: bytes, *, content_type: str = "image/jpeg"
 ) -> bool:
     """Best-effort: generate + persist a description for one already-stored
-    SubmittedImage row. Never raises - both the background worker (in a
+    Image row. Never raises - both the background worker (in a
     thread) and the CLI backfill below call this, and a slow/failed LLM
     call must not crash either. Returns whether it succeeded, so callers
     that want to report per-row status (the CLI) don't need their own
@@ -176,9 +176,9 @@ def backfill_missing(limit: int | None = None) -> None:
     session = SessionLocal()
     try:
         query = (
-            session.query(SubmittedImage)
-            .filter(SubmittedImage.description.is_(None))
-            .order_by(SubmittedImage.id)
+            session.query(Image)
+            .filter(Image.description.is_(None))
+            .order_by(Image.id)
         )
         if limit:
             query = query.limit(limit)

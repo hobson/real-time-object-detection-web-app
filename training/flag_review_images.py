@@ -1,5 +1,5 @@
-"""Tags training-imported images that need a human's eyes, using the
-cross_model_agreement/label_quality_score compute_label_confidence.py
+"""Tags approved (training-status) images that need a human's eyes, using
+the cross_model_agreement/label_quality_score compute_label_confidence.py
 already computed, then reports the worst-scored images with direct
 Flask-Admin edit links.
 
@@ -9,9 +9,10 @@ Two review-flag tag families (items 4+5):
     cross_model_agreement is low - one tag per flagged class per image, so
     a curator can filter admin by exactly which class needs a second look.
   - "review license_plate labels": an image where the plate detector's own
-    fresh pass (persisted by compute_label_confidence.py as model_name=
-    yolo-v9-t-384-license-plate-end2end) found a plate with no matching
-    license_plate DetectionLabel at all - i.e. a likely unlabeled plate.
+    fresh pass (persisted by compute_label_confidence.py under a model-type
+    LabelSource named yolo-v9-t-384-license-plate-end2end) found a plate
+    with no matching license_plate Annotation at all - i.e. a likely
+    unlabeled plate.
 
 Usage: python training/flag_review_images.py [--agreement-threshold 0.34] [--top-n 5]
 """
@@ -28,7 +29,7 @@ INFERENCE_SERVER_DIR = REPO_ROOT / "inference-server"
 load_dotenv(INFERENCE_SERVER_DIR / ".env")
 sys.path.insert(0, str(INFERENCE_SERVER_DIR))
 
-from orm import DetectionLabel, SubmittedImage, Tag, engine_from_env  # noqa: E402
+from orm import Annotation, Image, Tag, engine_from_env  # noqa: E402
 from review_confusion_matrix import iou  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -52,19 +53,19 @@ def flag_low_confidence_classes(session: Session, threshold: float) -> int:
     `threshold` allows (i.e. cross_model_agreement below threshold)."""
     flagged = 0
     labels = (
-        session.query(DetectionLabel)
-        .join(DetectionLabel.submitted_image)
-        .filter(DetectionLabel.cross_model_agreement.isnot(None))
-        .filter(DetectionLabel.cross_model_agreement < threshold)
-        .filter(SubmittedImage.endpoint == "training_import")
+        session.query(Annotation)
+        .join(Annotation.image)
+        .filter(Annotation.cross_model_agreement.isnot(None))
+        .filter(Annotation.cross_model_agreement < threshold)
+        .filter(Image.training_status == Image.TRAINING_STATUS_APPROVED)
         .all()
     )
     for label in labels:
         if not label.class_name:
             continue
         tag = _get_or_create_tag(session, f"review {label.class_name} labels")
-        if tag not in label.submitted_image.tags:
-            label.submitted_image.tags.append(tag)
+        if tag not in label.image.tags:
+            label.image.tags.append(tag)
             flagged += 1
     session.commit()
     return flagged
@@ -72,17 +73,24 @@ def flag_low_confidence_classes(session: Session, threshold: float) -> int:
 
 def flag_unlabeled_plates(session: Session) -> int:
     """Item 5: the plate detector found something, but no license_plate
-    DetectionLabel on this image matches it (IoU>=0.5) - a likely missed
+    Annotation on this image matches it (IoU>=0.5) - a likely missed
     plate annotation."""
     flagged = 0
     images = (
-        session.query(SubmittedImage)
-        .filter(SubmittedImage.endpoint == "training_import")
+        session.query(Image)
+        .filter(Image.training_status == Image.TRAINING_STATUS_APPROVED)
         .all()
     )
     for image in images:
-        plate_detections = [d for d in image.detections if d.model_name == PLATE_MODEL_NAME]
-        existing_plates = [d for d in image.detections if d.class_id == LICENSE_PLATE_CLASS_ID and d.model_name != PLATE_MODEL_NAME]
+        plate_detections = [
+            d for d in image.annotations
+            if d.label_source.is_model(PLATE_MODEL_NAME)
+        ]
+        existing_plates = [
+            d for d in image.annotations
+            if d.class_id == LICENSE_PLATE_CLASS_ID
+            and not (d.label_source.is_model(PLATE_MODEL_NAME))
+        ]
         for det in plate_detections:
             det_box = (det.x_center - det.width / 2, det.y_center - det.height / 2, det.x_center + det.width / 2, det.y_center + det.height / 2)
             matched = any(
@@ -102,16 +110,16 @@ def flag_unlabeled_plates(session: Session) -> int:
 def report_lowest_confidence(session: Session, top_n: int) -> None:
     admin_base = f"http://localhost:{os.environ.get('ADMIN_PORT', '5001')}{os.environ.get('ADMIN_ROOT_PATH', '')}"
     images = (
-        session.query(SubmittedImage)
-        .filter(SubmittedImage.label_quality_score.isnot(None))
-        .order_by(SubmittedImage.label_quality_score.asc())
+        session.query(Image)
+        .filter(Image.label_quality_score.isnot(None))
+        .order_by(Image.label_quality_score.asc())
         .limit(top_n)
         .all()
     )
     print(f"\n[flag-review] Top {top_n} lowest-confidence images to review:")
     for image in images:
         tags = ", ".join(t.name for t in image.tags)
-        url = f"{admin_base}/submittedimage/edit/?id={image.id}"
+        url = f"{admin_base}/image/edit/?id={image.id}"
         print(f"  id={image.id:5d}  label_quality_score={image.label_quality_score:.3f}  tags=[{tags}]  {url}")
 
 
