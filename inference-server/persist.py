@@ -13,10 +13,11 @@ import socket
 from collections import Counter
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image as PILImage
 from PIL.ExifTags import GPSTAGS, IFD, TAGS
+from sqlalchemy.orm import Session
 
-from orm import DetectionLabel, SubmittedImage
+from orm import Annotation, Image, LabelSource
 from db import SessionLocal
 
 logger = logging.getLogger("persist")
@@ -68,7 +69,7 @@ def _extract_exif(data: bytes) -> dict:
     camera metadata at all), but a real photo uploaded directly (e.g. via
     curl or the Swagger UI file picker) usually does."""
     try:
-        exif = Image.open(io.BytesIO(data)).getexif()
+        exif = PILImage.open(io.BytesIO(data)).getexif()
     except Exception:
         return {}
     if not exif:
@@ -134,7 +135,7 @@ def _store_image(data: bytes, content_type: str | None) -> str:
     return sha256, str(path)
 
 
-def _store_thumbnail(data: bytes, sha256: str, *, image: Image.Image | None = None) -> str | None:
+def _store_thumbnail(data: bytes, sha256: str, *, image: PILImage.Image | None = None) -> str | None:
     """Downscale the submitted image to fit THUMBNAIL_MAX_SIZE and save it
     as a JPEG for the admin list view. Returns None (not raised) on any
     decode failure - a missing thumbnail is not worth failing the request
@@ -151,13 +152,63 @@ def _store_thumbnail(data: bytes, sha256: str, *, image: Image.Image | None = No
     if path.exists():
         return str(path)
     try:
-        thumb = image.copy() if image is not None else Image.open(io.BytesIO(data)).convert("RGB")
+        thumb = image.copy() if image is not None else PILImage.open(io.BytesIO(data)).convert("RGB")
         thumb.thumbnail(THUMBNAIL_MAX_SIZE)
         thumb.save(path, format="JPEG", quality=80)
         return str(path)
     except Exception:
         logger.exception("Failed to generate thumbnail for %s", sha256)
         return None
+
+
+# ---------------------------------------------------------------------------
+# LabelSource resolution - get-or-create so repeated calls for the same
+# model/dataset identity reuse one row (see orm.py's LabelSource docstring).
+# Shared by this module's own server-side persistence below and by
+# training/db_load_training_images.py + training/compute_label_confidence.py
+# (imported directly from here, same as they already import _annotation
+# below) so there is exactly one place that knows how to resolve a
+# LabelSource identity.
+# ---------------------------------------------------------------------------
+
+def get_or_create(session: Session, model_cls, defaults: dict | None = None, **filters):
+    """Generic get-or-create: query `model_cls` by `filters`, or construct
+    and flush a new row using `filters` plus `defaults` (extra fields only
+    set on creation, not matched against - e.g. a Dataset's free-text
+    `description`, which shouldn't be part of its identity lookup).
+    Not module-private: also used by training/db_load_training_images.py's
+    tag/dataset lookups, which do the identical query-then-insert-if-missing
+    dance, so this pattern exists in exactly one place."""
+    existing = session.query(model_cls).filter_by(**filters).one_or_none()
+    if existing:
+        return existing
+    row = model_cls(**filters, **(defaults or {}))
+    session.add(row)
+    session.flush()
+    return row
+
+
+def get_or_create_model_label_source(
+    session: Session,
+    model_name: str | None,
+    *,
+    weights_hash: str | None = None,
+    major_version: int | None = None,
+    minor_version: int | None = None,
+) -> LabelSource:
+    """`model_name=None` (a server-computed detection with no reported model,
+    which shouldn't happen in practice given main.py/alpr.py always pass one,
+    but is guarded against here rather than raising) resolves to a single
+    shared "unknown" identity rather than leaving label_source_id null -
+    every Annotation must be attributable to *some* source."""
+    return get_or_create(
+        session, LabelSource, source_type="model", model_name=model_name or "unknown",
+        weights_hash=weights_hash, major_version=major_version, minor_version=minor_version,
+    )
+
+
+def get_or_create_dataset_label_source(session: Session, dataset_id: int) -> LabelSource:
+    return get_or_create(session, LabelSource, source_type="dataset", dataset_id=dataset_id)
 
 
 def persist_submission(
@@ -174,12 +225,14 @@ def persist_submission(
     detections: list[dict],
     capture_metadata: dict | None = None,
     client_detections: list[dict] | None = None,
-    image: Image.Image | None = None,
+    image: PILImage.Image | None = None,
 ) -> int | None:
     """Persist one submitted image plus its detections. `detections` items
     may include any of: class_id, class_name, box (normalized [x0,y0,x1,y1]
     or a (x_center,y_center,width,height) tuple already normalized),
-    confidence, plate_text, ocr_confidence, region, region_confidence.
+    confidence, plate_text, ocr_confidence, region, region_confidence,
+    model_name (overrides this call's own `model_name` for that one
+    detection - e.g. ALPR's OCR stage vs. its detector stage).
 
     `capture_metadata` is about the capture device/environment: the
     opportunistic GPS/orientation/acceleration/camera-facing blob a
@@ -192,16 +245,20 @@ def persist_submission(
     kept in its own column so querying/indexing one doesn't drag in the
     other. `client_detections` is that same caller's own detection payload
     (e.g. it already ran in-browser YOLO) - same shape as `detections`,
-    persisted as DetectionLabel rows with `source="client"` instead of the
+    persisted as Annotation rows with `source="client"` instead of the
     default `"server"`, so the two can be told apart later.
 
-    Returns the new SubmittedImage row's id, or None if persistence itself
-    failed (in which case there's no row for a caller to later attach a
+    Returns the new Image row's id, or None if persistence itself failed (in
+    which case there's no row for a caller to later attach a
     background-generated description to - see describe.py).
 
     `image` lets a caller that already decoded the bytes with PIL (main.py's
     /predict does, for inference) pass that Image along instead of paying
-    for a second full JPEG decode inside _store_thumbnail.
+    for a second full JPEG decode inside _store_thumbnail. Every persisted
+    row here defaults to `training_status="unreviewed"` (the Image column
+    default) - this is live, unvetted production traffic; promoting one into
+    the training corpus is a deliberate curator action in Flask-Admin, not
+    something this path ever does itself.
     """
     try:
         sha256, file_path = _store_image(image_bytes, content_type)
@@ -210,7 +267,7 @@ def persist_submission(
         detection_metadata = _detection_summary(detections)
         session = SessionLocal()
         try:
-            submitted = SubmittedImage(
+            submitted = Image(
                 sha256=sha256,
                 file_path=file_path,
                 thumbnail_path=thumbnail_path,
@@ -228,10 +285,20 @@ def persist_submission(
             session.add(submitted)
             session.flush()
 
+            # Resolve one LabelSource per unique model name across this
+            # whole batch, not once per detection - a single frame can carry
+            # many detections from the same model, and each resolution is a
+            # DB round trip (get-or-create).
+            all_dets = [*detections, *(client_detections or [])]
+            names = {det.get("model_name") or model_name for det in all_dets}
+            label_source_ids = {name: get_or_create_model_label_source(session, name).id for name in names}
+
             for det in detections:
-                session.add(_detection_label(submitted.id, det, model_name, source="server"))
+                label_source_id = label_source_ids[det.get("model_name") or model_name]
+                session.add(_annotation(submitted.id, det, label_source_id, source="server"))
             for det in client_detections or []:
-                session.add(_detection_label(submitted.id, det, model_name, source="client"))
+                label_source_id = label_source_ids[det.get("model_name") or model_name]
+                session.add(_annotation(submitted.id, det, label_source_id, source="client"))
             session.commit()
             return submitted.id
         finally:
@@ -241,25 +308,17 @@ def persist_submission(
         return None
 
 
-def _detection_label(
-    submitted_image_id: int,
-    det: dict,
-    model_name: str | None,
-    *,
-    source: str,
-    label_source: str = "machine",
-    dataset_id: int | None = None,
-) -> DetectionLabel:
-    """`label_source`/`dataset_id` default to "every detection this server
-    computes is machine-produced, not from a curated dataset" - true for
-    every existing caller (main.py/alpr.py). training/db_load_training_
-    images.py is the only caller that passes label_source="human_dataset"
-    (with dataset_id set) for ground-truth boxes copied in from KITTI/
-    COCO128/license_plates - see orm.py's DetectionLabel.label_source
-    docstring for why this is a separate concept from `source` above."""
+def _annotation(image_id: int, det: dict, label_source_id: int, *, source: str) -> Annotation:
+    """Build an (unsaved) Annotation row from a detection dict plus an
+    already-resolved `label_source_id` (see get_or_create_*_label_source
+    above - callers resolve the identity, this just assembles the row).
+    `source` ("server"/"client") is who computed this at request time,
+    orthogonal to label_source_id's "how did this label come to exist" -
+    see orm.py's Annotation.source docstring."""
     x_center, y_center, box_width, box_height = _to_center_wh(det["box"])
-    return DetectionLabel(
-        submitted_image_id=submitted_image_id,
+    return Annotation(
+        image_id=image_id,
+        label_source_id=label_source_id,
         class_id=det.get("class_id"),
         class_name=det.get("class_name") or det.get("class"),
         x_center=x_center,
@@ -267,14 +326,11 @@ def _detection_label(
         width=box_width,
         height=box_height,
         confidence=det.get("confidence"),
-        model_name=det.get("model_name") or model_name,
         plate_text=det.get("plate_text"),
         ocr_confidence=det.get("ocr_confidence"),
         region=det.get("region"),
         region_confidence=det.get("region_confidence"),
         source=source,
-        label_source=label_source,
-        dataset_id=dataset_id,
     )
 
 

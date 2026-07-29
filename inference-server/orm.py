@@ -1,15 +1,38 @@
 """SQLAlchemy ORM models for inference-server data curation.
 
-Two independent table families:
+Normalized around three concerns (see the DB-normalization plan this session
+worked from for the full rationale):
 
-Dataset curation (generic, reusable YOLO dataset schema — NOT tied to this
-repo's on-disk `data/license_plates/` layout or its specific 81-class list):
-    datasets, dataset_classes, dataset_images, dataset_labels
+  images          — pure image data, one row per unique upload/import,
+                    regardless of why it exists (production traffic vs.
+                    bulk-imported training corpus). `training_status`
+                    ("unreviewed"/"approved"/"rejected") is the one field
+                    that distinguishes "safe to train on" from "arrived via
+                    a live endpoint, not yet reviewed" — a curator can flip
+                    a production image to "approved" via Flask-Admin to
+                    promote it into the training corpus.
+  label_sources   — normalized, deduplicated identity of whatever produced
+                    a set of annotations: a specific model checkpoint
+                    (name + weights hash + major.minor version), a curated
+                    dataset (KITTI/COCO128/etc — see `datasets`), or a
+                    human curator editing/creating a label by hand in
+                    Flask-Admin. Replaces the old per-row `model_name`
+                    string + `label_source` string + `dataset_id` combo
+                    that used to live directly on every annotation row.
+  annotations     — the actual per-image detection/label content (box,
+                    class, confidence, OCR fields), FK'd to both `images`
+                    and `label_sources`. This is the images<->label_sources
+                    many-to-many, made concrete as the join-with-attributes
+                    table (bounding-box content is never actually shared
+                    across images, so there's no value in a separate
+                    content-only `labels` table plus a second join).
 
-Endpoint request/label logging (records what was actually sent to and
-returned by this server's own `/predict` and `/alpr/predict` /`/alpr/ws`
-routes):
-    submitted_images, detection_labels
+`datasets` is kept as a small side table naming curated datasets
+(KITTI/COCO128/...) — purely a `label_sources.dataset_id` FK target now;
+the earlier `DatasetClass`/`DatasetImage`/`DatasetLabel` tables that used to
+sit alongside it were a parallel, never-actually-wired-up generic YOLO
+dataset schema (confirmed zero rows, zero real consumers) and have been
+dropped entirely in favor of the schema above.
 
 This is a standalone implementation independent of the
 `yolo-dataset-curator` project (which covers similar ground with its own
@@ -24,11 +47,10 @@ Usage::
 """
 
 from datetime import datetime
-from enum import Enum
 
 from sqlalchemy import (
-    JSON, Column, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer,
-    String, Table, Text, UniqueConstraint, create_engine, func,
+    JSON, Column, DateTime, Float, ForeignKey, Index, Integer,
+    String, Table, Text, create_engine, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -37,14 +59,8 @@ class Base(DeclarativeBase):
     pass
 
 
-class DatasetSplit(Enum):
-    TRAIN = "train"
-    VAL = "val"
-    TEST = "test"
-
-
 # ---------------------------------------------------------------------------
-# Dataset curation — generic YOLO dataset schema
+# Datasets — named collections a label_source can point at
 # ---------------------------------------------------------------------------
 
 class Dataset(Base):
@@ -57,95 +73,138 @@ class Dataset(Base):
         DateTime, server_default=func.now(), nullable=False
     )
 
-    classes: Mapped[list["DatasetClass"]] = relationship(
-        "DatasetClass", back_populates="dataset", cascade="all, delete-orphan"
-    )
-    images: Mapped[list["DatasetImage"]] = relationship(
-        "DatasetImage", back_populates="dataset", cascade="all, delete-orphan"
-    )
-
     def __repr__(self) -> str:
         return f"<Dataset {self.id} {self.name!r}>"
 
 
-class DatasetClass(Base):
-    __tablename__ = "dataset_classes"
-    __table_args__ = (UniqueConstraint("dataset_id", "class_index"),)
+# ---------------------------------------------------------------------------
+# label_sources — normalized identity of whatever produced a set of labels
+# ---------------------------------------------------------------------------
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), nullable=False)
-    class_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
+class LabelSource(Base):
+    """One row per distinct label-producing identity:
 
-    dataset: Mapped[Dataset] = relationship("Dataset", back_populates="classes")
+      source_type="model"          — a specific model checkpoint, identified
+                                      by model_name + weights_hash (a short
+                                      sha256 prefix of the checkpoint file's
+                                      bytes - see training/model_identity.py)
+                                      + major_version.minor_version. major is
+                                      bumped only for architecture/
+                                      preprocessing changes; minor per
+                                      training run. weights_hash is null for
+                                      historical rows whose checkpoint file
+                                      has since been overwritten on disk by a
+                                      later round under the same path - it
+                                      can't be retroactively recomputed, and
+                                      such rows are deliberately NOT deduped
+                                      against each other (see the partial
+                                      unique index below).
+      source_type="dataset"        — a curated dataset (KITTI/COCO128/...),
+                                      dataset_id set, ground truth.
+      source_type="human_curator"  — a label manually created/edited in
+                                      Flask-Admin. curator_username is free
+                                      text for now (curation.py has no auth
+                                      system yet) - becomes a real FK to a
+                                      users table once one exists.
 
-    def __repr__(self) -> str:
-        return f"<DatasetClass {self.id} {self.class_index}={self.name!r}>"
+    Deduplicated via partial unique indexes (see __table_args__) so
+    re-scoring the same checkpoint, or re-importing the same dataset, reuses
+    the same row instead of creating a duplicate identity per run.
+    """
 
-
-class DatasetImage(Base):
-    __tablename__ = "dataset_images"
-    __table_args__ = (UniqueConstraint("dataset_id", "file_path"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), nullable=False)
-    file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
-    width: Mapped[int | None] = mapped_column(Integer)
-    height: Mapped[int | None] = mapped_column(Integer)
-    split: Mapped[DatasetSplit] = mapped_column(
-        SqlEnum(DatasetSplit), default=DatasetSplit.TRAIN, nullable=False
+    __tablename__ = "label_sources"
+    __table_args__ = (
+        Index(
+            "uq_label_sources_model",
+            "model_name", "weights_hash", "major_version", "minor_version",
+            unique=True,
+            postgresql_where=Column("source_type") == "model",
+            sqlite_where=Column("source_type") == "model",
+        ),
+        Index(
+            "uq_label_sources_dataset",
+            "dataset_id",
+            unique=True,
+            postgresql_where=Column("source_type") == "dataset",
+            sqlite_where=Column("source_type") == "dataset",
+        ),
+        Index(
+            "uq_label_sources_curator",
+            "curator_username",
+            unique=True,
+            postgresql_where=Column("source_type") == "human_curator",
+            sqlite_where=Column("source_type") == "human_curator",
+        ),
     )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String(128))
+    weights_hash: Mapped[str | None] = mapped_column(String(16))
+    major_version: Mapped[int | None] = mapped_column(Integer)
+    minor_version: Mapped[int | None] = mapped_column(Integer)
+    dataset_id: Mapped[int | None] = mapped_column(ForeignKey("datasets.id"))
+    curator_username: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
 
-    dataset: Mapped[Dataset] = relationship("Dataset", back_populates="images")
-    labels: Mapped[list["DatasetLabel"]] = relationship(
-        "DatasetLabel", back_populates="image", cascade="all, delete-orphan"
-    )
+    dataset: Mapped[Dataset | None] = relationship("Dataset")
+
+    @property
+    def is_dataset(self) -> bool:
+        return self.source_type == "dataset"
+
+    def is_model(self, model_name: str) -> bool:
+        return self.source_type == "model" and self.model_name == model_name
 
     def __repr__(self) -> str:
-        return f"<DatasetImage {self.id} {self.file_path!r}>"
-
-
-class DatasetLabel(Base):
-    __tablename__ = "dataset_labels"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    dataset_image_id: Mapped[int] = mapped_column(
-        ForeignKey("dataset_images.id"), nullable=False
-    )
-    class_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    x_center: Mapped[float] = mapped_column(Float, nullable=False)
-    y_center: Mapped[float] = mapped_column(Float, nullable=False)
-    width: Mapped[float] = mapped_column(Float, nullable=False)
-    height: Mapped[float] = mapped_column(Float, nullable=False)
-
-    image: Mapped[DatasetImage] = relationship("DatasetImage", back_populates="labels")
-
-    def __repr__(self) -> str:
-        return f"<DatasetLabel {self.id} class={self.class_index}>"
+        if self.source_type == "model":
+            return f"<LabelSource {self.id} model={self.model_name}@{self.weights_hash}>"
+        if self.source_type == "dataset":
+            return f"<LabelSource {self.id} dataset_id={self.dataset_id}>"
+        return f"<LabelSource {self.id} curator={self.curator_username!r}>"
 
 
 # ---------------------------------------------------------------------------
-# Endpoint request/label logging — this server's own inference traffic
+# images / annotations — every image this server has ever seen, and every
+# label attached to one, regardless of production traffic vs. training data
 # ---------------------------------------------------------------------------
 
 # Many-to-many: one image can carry several user-submitted tags, and one
 # tag (e.g. "car") applies across many images.
-submitted_image_tags = Table(
-    "submitted_image_tags",
+image_tags = Table(
+    "image_tags",
     Base.metadata,
-    Column("submitted_image_id", ForeignKey("submitted_images.id"), primary_key=True),
+    Column("image_id", ForeignKey("images.id"), primary_key=True),
     Column("tag_id", ForeignKey("tags.id"), primary_key=True),
 )
 
 
-class SubmittedImage(Base):
-    """One row per image POSTed to `/predict` or `/alpr/predict`, or per
-    frame received over `/alpr/ws`."""
+class Image(Base):
+    """One row per unique image this server has ever handled - a frame
+    POSTed to `/predict`/`/alpr/predict`/`/alpr/ws`, or an image bulk-loaded
+    from a curated training dataset (see training/db_load_training_
+    images.py). `training_status` is what actually distinguishes the two
+    for training purposes, not `endpoint`:
 
-    __tablename__ = "submitted_images"
+      "unreviewed" (default) — production traffic; not yet vetted for
+                                training use.
+      "approved"              — bulk-imported curated-dataset images, or a
+                                production image a curator has manually
+                                reviewed and promoted via Flask-Admin.
+      "rejected"               — a curator has explicitly excluded it.
+    """
+
+    __tablename__ = "images"
+
+    # String literals for training_status - centralized here so every query
+    # that filters on it (train_from_db.py, compute_label_confidence.py,
+    # flag_review_images.py) references one constant instead of repeating
+    # the literal "approved".
+    TRAINING_STATUS_UNREVIEWED = "unreviewed"
+    TRAINING_STATUS_APPROVED = "approved"
+    TRAINING_STATUS_REJECTED = "rejected"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -159,11 +218,24 @@ class SubmittedImage(Base):
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     content_type: Mapped[str | None] = mapped_column(String(64))
+    # Which route produced this row ("predict", "alpr_predict", "alpr_ws",
+    # "training_import", ...) - a request-time fact kept for admin
+    # filtering/search, but no longer the training-eligibility signal (see
+    # training_status below for that).
     endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Which model served THIS live request - a fact about the request,
+    # distinct from any one annotation's producing label_source (a request
+    # can run more than one model, e.g. ALPR's detector+OCR; an image can
+    # also later be re-scored by other models entirely, each getting its own
+    # label_sources row without touching this column).
     model_name: Mapped[str | None] = mapped_column(String(128))
     client_ip: Mapped[str | None] = mapped_column(String(64))
     inference_time_ms: Mapped[float | None] = mapped_column(Float)
     status_code: Mapped[int | None] = mapped_column(Integer)
+    # Whether this image is safe to train on - see class docstring.
+    training_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unreviewed", server_default="unreviewed"
+    )
     # Capture context: any client-supplied GPS/orientation/acceleration/
     # camera-facing data sent alongside the image over multipart (see
     # request_parsing.py), merged with server-derived data added by
@@ -181,12 +253,12 @@ class SubmittedImage(Base):
     # The YOLO-side counterpart to capture_metadata: a summary of what was
     # detected (see persist.py's _detection_summary) - `{"count": int,
     # "classes": {class_name: count}}`. The full per-detection data (boxes,
-    # confidence, etc.) already lives in DetectionLabel rows below; this is
+    # confidence, etc.) already lives in Annotation rows below; this is
     # just a cheap denormalized summary for admin display/search without a
     # join. Recomputed only at persist time and never mutated afterwards -
-    # DetectionLabelView has no column_editable_list, so there's no path
+    # AnnotationView has no column_editable_list, so there's no path
     # that could let this drift from the rows it summarizes; don't add
-    # DetectionLabel editing without revisiting this.
+    # Annotation editing without revisiting this.
     detection_metadata: Mapped[dict | None] = mapped_column(JSON)
     # Generated after the fact by describe.py's background queue (a
     # multimodal LLM call is way too slow to run inline with /predict) - an
@@ -196,7 +268,7 @@ class SubmittedImage(Base):
     # it, or if that job hasn't been run at all yet (see describe.py's
     # `main()` for backfilling existing rows).
     description: Mapped[str | None] = mapped_column(Text)
-    # Aggregate of this image's DetectionLabel rows' cross_model_agreement
+    # Aggregate of this image's Annotation rows' cross_model_agreement
     # (see that column's docstring) - mean agreement across labels that have
     # a score, or null if this image has no scored labels yet (never 0 -
     # "not yet scored" and "scored as untrustworthy" must stay distinguishable,
@@ -206,21 +278,23 @@ class SubmittedImage(Base):
         DateTime, server_default=func.now(), nullable=False
     )
 
-    detections: Mapped[list["DetectionLabel"]] = relationship(
-        "DetectionLabel", back_populates="submitted_image", cascade="all, delete-orphan"
+    annotations: Mapped[list["Annotation"]] = relationship(
+        "Annotation", back_populates="image", cascade="all, delete-orphan"
     )
     tags: Mapped[list["Tag"]] = relationship(
-        "Tag", secondary=submitted_image_tags, back_populates="images"
+        "Tag", secondary=image_tags, back_populates="images"
     )
 
     def __repr__(self) -> str:
-        return f"<SubmittedImage {self.id} endpoint={self.endpoint!r} sha256={self.sha256[:8]}>"
+        return f"<Image {self.id} endpoint={self.endpoint!r} sha256={self.sha256[:8]}>"
 
 
-class DetectionLabel(Base):
-    """One row per detection an endpoint returned for a `SubmittedImage`,
-    OR per detection a client attached to its own upload (`source`
-    distinguishes the two - see request_parsing.py's `client_detections`).
+class Annotation(Base):
+    """One row per detection/label attached to an `Image` - the
+    images<->label_sources many-to-many, made concrete: `image_id` says
+    which image, `label_source_id` says who/what produced this specific
+    box (a model checkpoint, a curated dataset's ground truth, or a human
+    curator - see `LabelSource`).
 
     OCR fields (`plate_text`, `ocr_confidence`, `region`,
     `region_confidence`) are populated only by `/alpr/predict`/`/alpr/ws`
@@ -228,12 +302,11 @@ class DetectionLabel(Base):
     detections, which have no OCR stage.
     """
 
-    __tablename__ = "detection_labels"
+    __tablename__ = "annotations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    submitted_image_id: Mapped[int] = mapped_column(
-        ForeignKey("submitted_images.id"), nullable=False
-    )
+    image_id: Mapped[int] = mapped_column(ForeignKey("images.id"), nullable=False)
+    label_source_id: Mapped[int] = mapped_column(ForeignKey("label_sources.id"), nullable=False)
     class_id: Mapped[int | None] = mapped_column(Integer)
     class_name: Mapped[str | None] = mapped_column(String(64))
     x_center: Mapped[float] = mapped_column(Float, nullable=False)
@@ -241,7 +314,6 @@ class DetectionLabel(Base):
     width: Mapped[float] = mapped_column(Float, nullable=False)
     height: Mapped[float] = mapped_column(Float, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float)
-    model_name: Mapped[str | None] = mapped_column(String(128))
     plate_text: Mapped[str | None] = mapped_column(String(64))
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
     region: Mapped[str | None] = mapped_column(String(16))
@@ -250,22 +322,17 @@ class DetectionLabel(Base):
     # "client" for a detection payload the caller attached to its own
     # multipart upload (e.g. a phone that already ran in-browser YOLO and
     # wants both its own and the server's results recorded side by side).
+    # Kept as its own column rather than folded into label_source_id: this
+    # answers "who computed this at request time," orthogonal to "how did
+    # this label come to exist" (label_source_id) - a client-reported
+    # detection is still produced by some model (the client's own on-device
+    # YOLO), which could get its own real LabelSource row if that ever
+    # becomes worth distinguishing per-client-model; collapsing "server" vs
+    # "client" into label_source_id today would discard that distinction by
+    # merging every client's report into one identity regardless of model.
     source: Mapped[str] = mapped_column(
         String(16), nullable=False, default="server", server_default="server"
     )
-    # Distinct from `source` above, which is about *who computed this at
-    # request time* (server vs. a client's own upload) - label_source is
-    # about *how this label came to exist at all*: "machine" (a model
-    # produced it - see model_name for which one) or "human_dataset" (ground
-    # truth copied in from a human-curated dataset like KITTI/COCO, see
-    # dataset_id for which one). Needed once training data got loaded into
-    # this same table/schema (see training/db_load_training_images.py) -
-    # `source` alone can't distinguish "KITTI's own ground truth" from "a
-    # model's pseudo-label," both of which land here as ordinary rows.
-    label_source: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="machine", server_default="machine"
-    )
-    dataset_id: Mapped[int | None] = mapped_column(ForeignKey("datasets.id"))
     # Fraction of independent reference models (see
     # training/compute_label_confidence.py) whose own fresh detection over
     # this image confirms this label (IoU>=0.5 + matching class). Null until
@@ -273,19 +340,26 @@ class DetectionLabel(Base):
     # this label" result, so the two must stay distinguishable.
     cross_model_agreement: Mapped[float | None] = mapped_column(Float)
 
-    submitted_image: Mapped[SubmittedImage] = relationship(
-        "SubmittedImage", back_populates="detections"
-    )
-    dataset: Mapped[Dataset | None] = relationship("Dataset")
+    image: Mapped[Image] = relationship("Image", back_populates="annotations")
+    label_source: Mapped[LabelSource] = relationship("LabelSource")
+
+    def is_trusted(self, agreement_threshold: float) -> bool:
+        """Ground truth from a curated dataset is trusted unconditionally;
+        a machine label is trusted only if independent reference models
+        corroborate it at least `agreement_threshold` (see
+        training/compute_label_confidence.py's cross_model_agreement)."""
+        return self.label_source.is_dataset or (
+            self.cross_model_agreement is not None and self.cross_model_agreement >= agreement_threshold
+        )
 
     def __repr__(self) -> str:
-        return f"<DetectionLabel {self.id} class={self.class_name} plate={self.plate_text!r}>"
+        return f"<Annotation {self.id} class={self.class_name} plate={self.plate_text!r}>"
 
 
 class Tag(Base):
-    """A user-submitted label for a SubmittedImage (e.g. "flower", "license
-    tag", "NYC") - many-to-many via submitted_image_tags, since one image
-    can carry several tags and one tag applies across many images.
+    """A user-submitted label for an Image (e.g. "flower", "license tag",
+    "NYC") - many-to-many via image_tags, since one image can carry several
+    tags and one tag applies across many images.
 
     Deliberately case-sensitive and space-permitting (plain String equality
     and uniqueness, no normalization/lowercasing) - a curator's own
@@ -298,8 +372,8 @@ class Tag(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
 
-    images: Mapped[list[SubmittedImage]] = relationship(
-        "SubmittedImage", secondary=submitted_image_tags, back_populates="tags"
+    images: Mapped[list[Image]] = relationship(
+        "Image", secondary=image_tags, back_populates="tags"
     )
 
     def __repr__(self) -> str:

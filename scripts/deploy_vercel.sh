@@ -25,6 +25,7 @@
 #   ./scripts/deploy_vercel.sh
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/lib/check_alive.sh
 
 # Sanity-check the build against the full repo first (catches type errors/
 # build failures before spending a Vercel build minute on them) - this is
@@ -53,3 +54,8 @@ du -sh "$STAGE"/* | sort -rh
 cd "$STAGE"
 npx vercel link --yes --project master-worktree --scope yolo17
 npx vercel --prod --yes
+
+# Aliveness check, against the fixed production alias (the per-deploy URL
+# vercel prints also works, but the alias is what actually matters and
+# doesn't change between deploys).
+check_alive "https://master-worktree.vercel.app/"

@@ -3,51 +3,76 @@ against a real (in-memory SQLite) DB rather than mocks - both functions
 under test do real ORM queries/writes, which mocking would just re-assert
 rather than verify."""
 from compute_label_confidence import _persist_new_detections, _score_image
-from orm import DetectionLabel, SubmittedImage
+from orm import Annotation, Image, LabelSource
 
 
-def _make_image(session) -> SubmittedImage:
-    image = SubmittedImage(sha256="a" * 64, file_path="/tmp/x.jpg", endpoint="training_import")
+def _make_image(session) -> Image:
+    image = Image(sha256="a" * 64, file_path="/tmp/x.jpg", endpoint="training_import", training_status="approved")
     session.add(image)
     session.flush()
     return image
 
 
-def _make_label(session, image, class_id, box, model_name=None) -> DetectionLabel:
+def _make_model_label_source(session, model_name: str) -> LabelSource:
+    label_source = LabelSource(source_type="model", model_name=model_name)
+    session.add(label_source)
+    session.flush()
+    return label_source
+
+
+def _make_label(session, image, class_id, box, label_source: LabelSource | None = None) -> Annotation:
     x0, y0, x1, y1 = box
-    label = DetectionLabel(
-        submitted_image_id=image.id, class_id=class_id, class_name=str(class_id),
+    label = Annotation(
+        image_id=image.id, class_id=class_id, class_name=str(class_id),
         x_center=(x0 + x1) / 2, y_center=(y0 + y1) / 2, width=x1 - x0, height=y1 - y0,
-        model_name=model_name, label_source="human_dataset" if model_name is None else "machine",
+        label_source_id=label_source.id if label_source else _make_dataset_label_source(session).id,
     )
     session.add(label)
     session.flush()
     return label
 
 
+def _make_dataset_label_source(session) -> LabelSource:
+    from orm import Dataset
+    dataset = session.query(Dataset).filter_by(name="test-dataset").one_or_none()
+    if dataset is None:
+        dataset = Dataset(name="test-dataset")
+        session.add(dataset)
+        session.flush()
+    label_source = session.query(LabelSource).filter_by(source_type="dataset", dataset_id=dataset.id).one_or_none()
+    if label_source is None:
+        label_source = LabelSource(source_type="dataset", dataset_id=dataset.id)
+        session.add(label_source)
+        session.flush()
+    return label_source
+
+
 def test_persist_new_detections_skips_matching_existing_row(db_session):
     image = _make_image(db_session)
-    _make_label(db_session, image, class_id=2, box=(0.1, 0.1, 0.5, 0.5), model_name="modelA")
-    added = _persist_new_detections(db_session, image, "modelA", [(2, (0.1, 0.1, 0.5, 0.5))])
+    model_a = _make_model_label_source(db_session, "modelA")
+    _make_label(db_session, image, class_id=2, box=(0.1, 0.1, 0.5, 0.5), label_source=model_a)
+    added = _persist_new_detections(db_session, image, model_a.id, [(2, (0.1, 0.1, 0.5, 0.5))])
     assert added == 0
-    assert db_session.query(DetectionLabel).filter_by(submitted_image_id=image.id).count() == 1
+    assert db_session.query(Annotation).filter_by(image_id=image.id).count() == 1
 
 
 def test_persist_new_detections_adds_when_no_matching_row(db_session):
     image = _make_image(db_session)
-    added = _persist_new_detections(db_session, image, "modelA", [(2, (0.1, 0.1, 0.5, 0.5))])
+    model_a = _make_model_label_source(db_session, "modelA")
+    added = _persist_new_detections(db_session, image, model_a.id, [(2, (0.1, 0.1, 0.5, 0.5))])
     assert added == 1
-    rows = db_session.query(DetectionLabel).filter_by(submitted_image_id=image.id).all()
+    rows = db_session.query(Annotation).filter_by(image_id=image.id).all()
     assert len(rows) == 1
-    assert rows[0].model_name == "modelA"
-    assert rows[0].label_source == "machine"
+    assert rows[0].label_source.model_name == "modelA"
+    assert rows[0].label_source.source_type == "model"
 
 
 def test_persist_new_detections_different_class_not_deduped(db_session):
     image = _make_image(db_session)
-    _make_label(db_session, image, class_id=2, box=(0.1, 0.1, 0.5, 0.5), model_name="modelA")
+    model_a = _make_model_label_source(db_session, "modelA")
+    _make_label(db_session, image, class_id=2, box=(0.1, 0.1, 0.5, 0.5), label_source=model_a)
     # Same box, different class - not a match, should be added as a second row.
-    added = _persist_new_detections(db_session, image, "modelA", [(7, (0.1, 0.1, 0.5, 0.5))])
+    added = _persist_new_detections(db_session, image, model_a.id, [(7, (0.1, 0.1, 0.5, 0.5))])
     assert added == 1
 
 

@@ -41,6 +41,8 @@ import yaml
 from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
 
+from device_check import resolve_device
+
 REPO_ROOT = Path(__file__).parent.parent
 DATASET_DIR = REPO_ROOT / "data" / "license_plates"
 
@@ -204,6 +206,11 @@ def main():
     parser.add_argument("--iou-thresh", type=float, default=0.5)
     parser.add_argument("--imgsz", type=int, default=256)
     parser.add_argument("--output", default="runs/confusion_review")
+    parser.add_argument(
+        "--device", default="cpu", type=resolve_device,
+        help="Passed to model.predict(device=...) - verified via device_check.resolve_device as part of "
+        "argument parsing itself (type=resolve_device). Default 'cpu'.",
+    )
     args = parser.parse_args()
 
     dataset_config = yaml.safe_load(Path(args.data).read_text())
@@ -236,7 +243,7 @@ def main():
         img_w, img_h = img.size
         gt_by_class = parse_yolo_labels(label_path_for_image(image_path), img_w, img_h)
 
-        result = model.predict(str(image_path), imgsz=args.imgsz, conf=args.conf, verbose=False)[0]
+        result = model.predict(str(image_path), imgsz=args.imgsz, conf=args.conf, verbose=False, device=args.device)[0]
         pred_by_class: dict[int, list[tuple]] = {}
         if result.boxes is not None:
             for box_xyxy, cls_id, conf in zip(

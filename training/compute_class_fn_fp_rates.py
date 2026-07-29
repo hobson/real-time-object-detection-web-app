@@ -60,6 +60,7 @@ import yaml
 from PIL import Image
 from ultralytics import YOLO
 
+from device_check import resolve_device
 from finetune_license_plate_interleaved import _list_images
 from review_confusion_matrix import label_path_for_image, match_boxes, parse_yolo_labels
 
@@ -67,7 +68,8 @@ EPS = 1e-3
 
 
 def aggregate_counts(
-    model: YOLO, image_paths: list[Path], num_classes: int, imgsz: int, conf: float, iou_thresh: float
+    model: YOLO, image_paths: list[Path], num_classes: int, imgsz: int, conf: float, iou_thresh: float,
+    device: str = "cpu",
 ) -> tuple[list[int], list[int], list[int]]:
     """Returns (tp, fp, fn) - one count per class, summed across every image
     in image_paths. Only classes that appear as ground truth and/or a
@@ -85,7 +87,7 @@ def aggregate_counts(
         img_w, img_h = img.size
         gt_by_class = parse_yolo_labels(label_path_for_image(image_path), img_w, img_h)
 
-        result = model.predict(str(image_path), imgsz=imgsz, conf=conf, verbose=False)[0]
+        result = model.predict(str(image_path), imgsz=imgsz, conf=conf, verbose=False, device=device)[0]
         pred_by_class: dict[int, list[tuple]] = {}
         if result.boxes is not None:
             for box_xyxy, cls_id in zip(result.boxes.xyxy.tolist(), result.boxes.cls.tolist()):
@@ -154,6 +156,11 @@ def main():
     parser.add_argument("--max-weight", type=float, default=10.0)
     parser.add_argument("--out", required=True, help="Where to save the class_weights tensor (.pt).")
     parser.add_argument("--report-out", default=None, help="Optional per-class TP/FP/FN/rate/weight JSON, for auditing (defaults to --out with .json instead of .pt).")
+    parser.add_argument(
+        "--device", default="cpu", type=resolve_device,
+        help="Passed to model.predict(device=...) - verified via device_check.resolve_device as part of "
+        "argument parsing itself (type=resolve_device). Default 'cpu'.",
+    )
     args = parser.parse_args()
 
     dataset_config = yaml.safe_load(Path(args.data).read_text())
@@ -164,7 +171,7 @@ def main():
     print(f"[compute-weights] {len(image_paths)} images in split={args.split}, {num_classes} classes")
 
     model = YOLO(args.model)
-    tp, fp, fn = aggregate_counts(model, image_paths, num_classes, args.imgsz, args.conf, args.iou_thresh)
+    tp, fp, fn = aggregate_counts(model, image_paths, num_classes, args.imgsz, args.conf, args.iou_thresh, args.device)
     weights, per_class = compute_weights(tp, fp, fn, args.beta, args.min_weight, args.max_weight)
 
     out_path = Path(args.out)

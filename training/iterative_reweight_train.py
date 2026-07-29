@@ -80,6 +80,24 @@ def main():
     parser.add_argument("--min-weight", type=float, default=0.1)
     parser.add_argument("--max-weight", type=float, default=10.0)
     parser.add_argument("--project", default="runs/license_plate")
+    parser.add_argument(
+        "--device", default="cpu",
+        help="Passed to train_from_db.py, compute_class_fn_fp_rates.py, and compute_label_confidence.py "
+        "- each verifies it independently via device_check.resolve_device before use. See train_from_db.py's "
+        "--device help.",
+    )
+    parser.add_argument("--cos-lr", action="store_true", help="Passed to train_from_db.py - see its --cos-lr help.")
+    parser.add_argument("--warmup-epochs", type=float, default=3.0, help="Passed to train_from_db.py - see its --warmup-epochs help.")
+    parser.add_argument("--multi-scale", action="store_true", help="Passed to train_from_db.py - see its --multi-scale help.")
+    parser.add_argument(
+        "--skip-training-for-round", type=int, default=None,
+        help="If set, skip train_from_db.py for this one round number and read its checkpoint "
+        "from the existing from_db_round{N}_best_path.txt instead (which must already exist) - "
+        "for resuming a run where that round's training already finished but the trailing "
+        "fn/fp-rate + confidence-rescoring steps never ran (e.g. after an SSH disconnect killed "
+        "the parent process mid-loop). --checkpoint/--initial-model-name are unused for this "
+        "round when set, since its real checkpoint/name come from the existing best_path_out file.",
+    )
     args = parser.parse_args()
 
     WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,21 +118,35 @@ def main():
         run_name = f"license_plate_ft_from_db_round{round_i}"
         best_path_out = WEIGHTS_DIR / f"from_db_round{round_i}_best_path.txt"
 
-        run([
-            sys.executable, "training/train_from_db.py",
-            "--checkpoint", checkpoint,
-            "--current-model-name", current_model_name,
-            "--epochs", str(args.epochs_per_round),
-            "--agreement-threshold", str(args.agreement_threshold),
-            "--oversample-repeats", str(args.oversample_repeats),
-            "--class-weights-file", str(weights_path),
-            "--project", args.project,
-            "--name", run_name,
-            "--best-path-out", str(best_path_out),
-        ])
-        checkpoint = best_path_out.read_text().strip()
-        current_model_name = run_name
-        print(f"[iterative-reweight] Round {round_i} checkpoint: {checkpoint}")
+        if round_i == args.skip_training_for_round:
+            if not best_path_out.exists():
+                raise SystemExit(
+                    f"--skip-training-for-round {round_i} but {best_path_out} doesn't exist - "
+                    "that round's training hasn't actually finished, nothing to resume from."
+                )
+            checkpoint = best_path_out.read_text().strip()
+            current_model_name = run_name
+            print(f"[iterative-reweight] Round {round_i}: skipping training (resuming), using existing checkpoint {checkpoint}")
+        else:
+            train_cmd = [
+                sys.executable, "training/train_from_db.py",
+                "--checkpoint", checkpoint,
+                "--current-model-name", current_model_name,
+                "--epochs", str(args.epochs_per_round),
+                "--agreement-threshold", str(args.agreement_threshold),
+                "--oversample-repeats", str(args.oversample_repeats),
+                "--class-weights-file", str(weights_path),
+                "--project", args.project,
+                "--name", run_name,
+                "--best-path-out", str(best_path_out),
+                "--device", args.device,
+                "--warmup-epochs", str(args.warmup_epochs),
+            ]
+            train_cmd += [f"--{flag}" for flag, enabled in [("cos-lr", args.cos_lr), ("multi-scale", args.multi_scale)] if enabled]
+            run(train_cmd)
+            checkpoint = best_path_out.read_text().strip()
+            current_model_name = run_name
+            print(f"[iterative-reweight] Round {round_i} checkpoint: {checkpoint}")
 
         new_weights_path = WEIGHTS_DIR / f"from_db_round{round_i}.pt"
         run([
@@ -125,6 +157,7 @@ def main():
             "--min-weight", str(args.min_weight),
             "--max-weight", str(args.max_weight),
             "--out", str(new_weights_path),
+            "--device", args.device,
         ])
 
         new_weights = torch.load(new_weights_path)
@@ -148,6 +181,7 @@ def main():
             sys.executable, "training/compute_label_confidence.py",
             "--current-model", checkpoint,
             "--current-model-name", current_model_name,
+            "--device", args.device,
         ])
 
     print(f"[iterative-reweight] Final checkpoint: {checkpoint}")

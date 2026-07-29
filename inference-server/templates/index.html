@@ -11,9 +11,9 @@
 
 <h2>Features</h2>
 <ul>
-  <li><strong>Thumbnails</strong> - a small preview rendered at capture time, shown inline in the Submitted Images list.</li>
+  <li><strong>Thumbnails</strong> - a small preview rendered at capture time, shown inline in the Images list.</li>
   <li><strong>Capture metadata</strong> - EXIF pulled from the image (camera make/model/focal length/GPS, when present) plus which host ran inference, kept separate from detection metadata.</li>
-  <li><strong>Detection metadata</strong> - a denormalized YOLO detection summary (count + per-class counts) alongside the full per-box <a href="{{ url_for('detectionlabel.index_view') }}">Detection Labels</a>.</li>
+  <li><strong>Detection metadata</strong> - a denormalized YOLO detection summary (count + per-class counts) alongside the full per-box <a href="{{ url_for('annotation.index_view') }}">Annotations</a>.</li>
   <li><strong>LLM-generated descriptions</strong> - an accessibility-alt-text-style caption + keywords, generated in the background by a colocated multimodal LLM, editable by hand.</li>
   <li><strong>User tags</strong> - free-form, case-sensitive labels applied to any submitted image.</li>
   <li><strong>Full-text search + lexical sorting</strong> - every column below, including JSON blobs and long file paths, is searchable (substring by default; quote for case-sensitive whole-word; <code>*</code> for regex) and sortable.</li>

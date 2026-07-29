@@ -40,7 +40,7 @@ SearchableMixin / auto_sortable_columns / auto_searchable_columns
 import itertools
 from functools import cached_property
 
-from flask import Flask, send_from_directory, url_for
+from flask import Flask, abort, render_template, send_file, send_from_directory, url_for
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
@@ -49,11 +49,9 @@ from markupsafe import Markup
 
 from flask_admin_toolkit import SearchableMixin, auto_searchable_columns, auto_sortable_columns
 
-from orm import (
-    Base, Dataset, DatasetClass, DatasetImage, DatasetLabel,
-    DetectionLabel, SubmittedImage, Tag,
-)
-from persist import THUMBNAIL_DIR
+from clean_db import abbreviate_hash
+from orm import Annotation, Base, Dataset, Image, LabelSource, Tag
+from persist import STORAGE_DIR, THUMBNAIL_DIR
 
 import os
 
@@ -106,33 +104,19 @@ class DatasetView(_BaseView):
     form_columns = ["name", "description"]
 
 
-class DatasetClassView(_BaseView):
-    column_list = ["id", "dataset", "class_index", "name"]
-    column_searchable_list = auto_searchable_columns(DatasetClass)
-    column_filters = ["dataset"]
-    column_sortable_list = auto_sortable_columns(DatasetClass)
-    column_default_sort = ("class_index", False)
-    form_columns = ["dataset", "class_index", "name"]
-
-
-class DatasetImageView(_BaseView):
-    column_list = ["id", "dataset", "file_path", "split", "width", "height", "created_at"]
-    column_searchable_list = auto_searchable_columns(DatasetImage)
-    column_filters = ["dataset", "split"]
-    column_sortable_list = auto_sortable_columns(DatasetImage)
-    column_default_sort = ("created_at", True)
-    column_editable_list = ["split"]
-    form_columns = ["dataset", "file_path", "width", "height", "split"]
-
-
-class DatasetLabelView(_BaseView):
+class LabelSourceView(_BaseView):
     column_list = [
-        "id", "image", "class_index", "x_center", "y_center", "width", "height",
+        "id", "source_type", "model_name", "weights_hash", "major_version",
+        "minor_version", "dataset", "curator_username", "created_at",
     ]
-    column_filters = ["class_index"]
-    column_sortable_list = auto_sortable_columns(DatasetLabel)
-    column_default_sort = ("id", False)
-    form_columns = ["image", "class_index", "x_center", "y_center", "width", "height"]
+    column_searchable_list = auto_searchable_columns(LabelSource)
+    column_filters = ["source_type", "model_name", "dataset", "curator_username"]
+    column_sortable_list = auto_sortable_columns(LabelSource)
+    column_default_sort = ("created_at", True)
+    form_columns = [
+        "source_type", "model_name", "weights_hash", "major_version",
+        "minor_version", "dataset", "curator_username",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +127,8 @@ def _thumbnail_formatter(view, context, model, name):
     if not model.thumbnail_path:
         return ""
     src = url_for("thumbnail_file", filename=f"{model.sha256}.jpg")
-    return Markup(f'<img src="{src}" style="max-height:64px;max-width:64px">')
+    href = url_for("image_view_page", image_id=model.id)
+    return Markup(f'<a href="{href}"><img src="{src}" style="max-height:64px;max-width:64px"></a>')
 
 
 def _description_formatter(view, context, model, name):
@@ -157,41 +142,65 @@ def _tags_formatter(view, context, model, name):
     return ", ".join(t.name for t in model.tags) if model.tags else ""
 
 
-class SubmittedImageView(_BaseView):
+def _label_source_display_name(label_source: LabelSource) -> str:
+    """Human-readable identity for a LabelSource, for the image detail
+    page's per-source radio buttons (see image_view_page) - mirrors
+    LabelSource.__repr__'s per-source_type branching but without the
+    id/debug framing, since this is user-facing UI text, not a repr."""
+    if label_source.source_type == "model":
+        return f"Model: {label_source.model_name}"
+    if label_source.source_type == "dataset":
+        return f"Dataset: {label_source.dataset.name}" if label_source.dataset else "Dataset: (unknown)"
+    return f"Curator: {label_source.curator_username}"
+
+
+def _sha256_formatter(view, context, model, name):
+    """Table cell shows only an abbreviated hash (see clean_db.abbreviate_
+    hash) - the full sha256 is available via this same link's title tooltip
+    and, in full, on the image detail page itself (templates/image_view.html)."""
+    href = url_for("image_view_page", image_id=model.id)
+    return Markup(f'<a href="{href}" title="{model.sha256}">{abbreviate_hash(model.sha256)}</a>')
+
+
+class ImageView(_BaseView):
     column_list = [
-        "id", "thumbnail_path", "endpoint", "model_name", "sha256", "width",
-        "height", "description", "tags", "label_quality_score",
-        "inference_time_ms", "status_code", "client_ip", "received_at",
+        "id", "thumbnail_path", "endpoint", "training_status", "model_name",
+        "sha256", "width", "height", "description", "tags",
+        "label_quality_score", "inference_time_ms", "status_code",
+        "client_ip", "received_at",
     ]
     column_labels = {"thumbnail_path": "Thumbnail"}
     column_formatters = {
         "thumbnail_path": _thumbnail_formatter,
         "description": _description_formatter,
         "tags": _tags_formatter,
+        "sha256": _sha256_formatter,
     }
-    # Inline textarea edit straight from the list view (same x-editable
-    # pattern DatasetImageView uses for `split`) - a background-generated
-    # caption is often close but not exactly what a curator wants, and
-    # shouldn't require opening the full edit form just to tweak wording.
-    column_editable_list = ["description"]
+    # Inline textarea edit straight from the list view. `training_status` is
+    # editable here specifically so a curator can promote a production image
+    # into the trusted training corpus (or reject one) without opening the
+    # full edit form - see orm.py's Image.training_status docstring; this is
+    # the actual UI surface for that workflow, not incidental.
+    column_editable_list = ["description", "training_status"]
     # auto_searchable_columns already covers every String/JSON column
     # (sha256, client_ip, file_path, description, capture_metadata,
     # detection_metadata, ...) - "tags.name" is added on top since it's a
     # relationship, not a column, so the auto-deriver can't see it.
-    column_searchable_list = [*auto_searchable_columns(SubmittedImage), "tags.name"]
+    column_searchable_list = [*auto_searchable_columns(Image), "tags.name"]
     column_filters = [
-        "endpoint", "model_name", "status_code", "received_at", "tags",
-        "label_quality_score",
+        "endpoint", "training_status", "model_name", "status_code",
+        "received_at", "tags", "label_quality_score",
     ]
-    column_sortable_list = auto_sortable_columns(SubmittedImage)
+    column_sortable_list = auto_sortable_columns(Image)
     # Left at received_at (not label_quality_score) - most rows in this table
-    # are ordinary endpoint traffic with a null score (only training-imported
-    # images get scored by compute_label_confidence.py), so defaulting to a
-    # quality-score sort here would bury normal traffic under a wall of
-    # null rows. Sorting by label_quality_score is still available via
-    # column_sortable_list/the URL's ?sort= param when reviewing training
-    # data specifically; training/flag_review_images.py's top-5 report
-    # queries this directly rather than relying on the admin's default sort.
+    # are ordinary endpoint traffic with a null score (only approved/
+    # training images get scored by compute_label_confidence.py), so
+    # defaulting to a quality-score sort here would bury normal traffic
+    # under a wall of null rows. Sorting by label_quality_score is still
+    # available via column_sortable_list/the URL's ?sort= param when
+    # reviewing training data specifically; training/flag_review_images.py's
+    # top-5 report queries this directly rather than relying on the admin's
+    # default sort.
     column_default_sort = ("received_at", True)
     # capture_metadata/detection_metadata are JSON blobs (see orm.py - one's
     # about the capture device/environment, the other's the YOLO output
@@ -199,8 +208,9 @@ class SubmittedImageView(_BaseView):
     column_exclude_list = ["file_path", "content_type", "capture_metadata", "detection_metadata"]
     form_columns = [
         "sha256", "file_path", "width", "height", "content_type", "endpoint",
-        "model_name", "client_ip", "inference_time_ms", "status_code",
-        "description", "tags", "capture_metadata", "detection_metadata",
+        "training_status", "model_name", "client_ip", "inference_time_ms",
+        "status_code", "description", "tags", "capture_metadata",
+        "detection_metadata",
     ]
 
 
@@ -212,24 +222,20 @@ class TagView(_BaseView):
     form_columns = ["name"]
 
 
-class DetectionLabelView(_BaseView):
+class AnnotationView(_BaseView):
     column_list = [
-        "id", "submitted_image", "class_name", "confidence", "source",
-        "label_source", "dataset", "cross_model_agreement", "plate_text",
-        "ocr_confidence", "region", "model_name",
+        "id", "image", "class_name", "confidence", "source", "label_source",
+        "cross_model_agreement", "plate_text", "ocr_confidence", "region",
     ]
-    column_searchable_list = auto_searchable_columns(DetectionLabel)
-    column_filters = [
-        "class_name", "model_name", "region", "source", "label_source",
-        "dataset", "cross_model_agreement",
-    ]
-    column_sortable_list = auto_sortable_columns(DetectionLabel)
+    column_searchable_list = auto_searchable_columns(Annotation)
+    column_filters = ["class_name", "region", "source", "label_source", "cross_model_agreement"]
+    column_sortable_list = auto_sortable_columns(Annotation)
     column_default_sort = ("id", False)
     form_columns = [
-        "submitted_image", "class_id", "class_name", "x_center", "y_center",
-        "width", "height", "confidence", "model_name", "source",
-        "label_source", "dataset", "cross_model_agreement", "plate_text",
-        "ocr_confidence", "region", "region_confidence",
+        "image", "class_id", "class_name", "x_center", "y_center",
+        "width", "height", "confidence", "label_source", "source",
+        "cross_model_agreement", "plate_text", "ocr_confidence", "region",
+        "region_confidence",
     ]
 
 
@@ -246,20 +252,25 @@ class DetectionLabelView(_BaseView):
 # no description, rather than silently vanishing from the home page the way
 # a second hand-maintained list could drift.
 VIEW_DESCRIPTIONS = {
-    "submittedimage": (
-        "Every image POSTed to /predict or /alpr/predict (or frame over /alpr/ws) - "
-        "thumbnail, capture EXIF/host metadata, YOLO detection summary, an "
-        "LLM-generated accessibility description, and user tags."
+    "image": (
+        "Every image this server has ever handled - production traffic POSTed to "
+        "/predict or /alpr/predict (or a frame over /alpr/ws), AND bulk-imported "
+        "training-dataset images. training_status distinguishes the two for training "
+        "purposes: 'unreviewed' (production default), 'approved' (safe to train on - "
+        "bulk imports default here; a curator can promote a reviewed production image "
+        "here too), or 'rejected'."
     ),
-    "detectionlabel": (
-        "One row per detection (server- or client-computed) tied to a submitted "
-        "image - class, box, confidence, and OCR fields for license-plate detections."
+    "annotation": (
+        "One row per detection/label tied to an image - class, box, confidence, OCR "
+        "fields for license-plate detections, and which label_source produced it."
     ),
-    "tag": 'User-curated labels (e.g. "flower", "license tag", "NYC") applied to submitted images.',
-    "dataset": "A named collection of images + labels for training/fine-tuning a custom model.",
-    "datasetclass": "The class index -> name mapping for one dataset (its own labels.txt/data.yaml, in effect).",
-    "datasetimage": "One row per image belonging to a dataset, with its train/val/test split.",
-    "datasetlabel": "One YOLO-format bounding-box label (class + normalized center/width/height) per dataset image.",
+    "labelsource": (
+        "Normalized identity of whatever produced a set of annotations: a specific "
+        "model checkpoint (name + weights hash + major.minor version), a curated "
+        "dataset, or a human curator editing a label by hand."
+    ),
+    "tag": 'User-curated labels (e.g. "flower", "license tag", "NYC") applied to images.',
+    "dataset": "A named curated dataset (KITTI/COCO128/...) - a label_source can point at one as ground truth.",
 }
 
 
@@ -316,6 +327,63 @@ def create_app(db_url: str | None = None) -> Flask:
     def thumbnail_file(filename):
         return send_from_directory(THUMBNAIL_DIR, filename)
 
+    @app.route("/image/<int:image_id>/full")
+    def image_full_file(image_id):
+        """Serves the full-resolution original, keyed by DB id (not a raw
+        filename in the URL) - looked up server-side via Image.file_path so
+        the route works regardless of the on-disk extension (.jpg/.png)."""
+        image = db.session.get(Image, image_id)
+        if image is None:
+            abort(404)
+        return send_file(image.file_path)
+
+    @app.route("/image/<int:image_id>/view")
+    def image_view_page(image_id):
+        """Full-size image with detection boxes/labels/OCR text drawn on a
+        canvas overlay - client-side JS does the drawing (see
+        templates/image_view.html) so the source-selection radios and
+        confidence slider redraw instantly with no round trip. Annotation
+        data is embedded directly in the page (one query, no separate JSON
+        endpoint) since this page has exactly one consumer (a human loading
+        it once) - not worth a second route.
+
+        Every annotation is tagged with its producing label_source's
+        display name (see _label_source_display_name) so the page can offer
+        a radio button per distinct source - "which model/dataset/curator's
+        labels am I looking at" - rather than showing every source's boxes
+        overlaid on top of each other at once."""
+        image = db.session.get(Image, image_id)
+        if image is None:
+            abort(404)
+        annotations = [
+            {
+                "class_name": a.class_name,
+                # None (ground-truth/human-labeled boxes have no model
+                # confidence) is normalized to 1.0 here - see the template's
+                # confidence-slider docstring for why: a real model
+                # confidence is always <=1.0, so treating "no confidence
+                # concept applies" as the maximum means these boxes stay
+                # visible at every threshold except the slider's own
+                # explicit "hide everything" max value (1.01).
+                "confidence": a.confidence if a.confidence is not None else 1.0,
+                "x_center": a.x_center, "y_center": a.y_center,
+                "width": a.width, "height": a.height,
+                "plate_text": a.plate_text,
+                "source": _label_source_display_name(a.label_source),
+            }
+            for a in image.annotations
+        ]
+        # Distinct sources, in first-seen order (dict preserves insertion
+        # order and dedupes for free) - the radio button list.
+        sources = list(dict.fromkeys(a["source"] for a in annotations))
+        return render_template(
+            "image_view.html",
+            image=image,
+            image_url=url_for("image_full_file", image_id=image.id),
+            annotations=annotations,
+            sources=sources,
+        )
+
     # Tables are created once via `python orm.py` (see docs/user-manual.md
     # §3), not here - this avoids every gunicorn worker re-running DDL
     # schema checks against Postgres on every startup/restart.
@@ -327,13 +395,11 @@ def create_app(db_url: str | None = None) -> Flask:
     # to keep in sync (see VIEW_DESCRIPTIONS above). Order matters: same-
     # category views must stay contiguous for _HomeView's groupby.
     model_views = [
-        SubmittedImageView(SubmittedImage, db, name="Submitted Images", category="Endpoint Traffic"),
-        DetectionLabelView(DetectionLabel, db, name="Detection Labels", category="Endpoint Traffic"),
-        TagView(Tag, db, name="Tags", category="Endpoint Traffic"),
-        DatasetView(Dataset, db, name="Datasets", category="Dataset Curation"),
-        DatasetClassView(DatasetClass, db, name="Dataset Classes", category="Dataset Curation"),
-        DatasetImageView(DatasetImage, db, name="Dataset Images", category="Dataset Curation"),
-        DatasetLabelView(DatasetLabel, db, name="Dataset Labels", category="Dataset Curation"),
+        ImageView(Image, db, name="Images", category="Images & Labels"),
+        AnnotationView(Annotation, db, name="Annotations", category="Images & Labels"),
+        LabelSourceView(LabelSource, db, name="Label Sources", category="Images & Labels"),
+        TagView(Tag, db, name="Tags", category="Images & Labels"),
+        DatasetView(Dataset, db, name="Datasets", category="Images & Labels"),
     ]
 
     admin = Admin(

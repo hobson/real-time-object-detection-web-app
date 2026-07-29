@@ -61,10 +61,11 @@ load_dotenv(INFERENCE_SERVER_DIR / ".env")
 sys.path.insert(0, str(INFERENCE_SERVER_DIR))
 sys.path.insert(0, str(TRAINING_DIR))
 
-from orm import SubmittedImage, engine_from_env  # noqa: E402
+from orm import Image, engine_from_env  # noqa: E402
 from review_confusion_matrix import iou  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from device_check import resolve_device  # noqa: E402
 from finetune_license_plate import restore_attention_position_encoding_bias  # noqa: E402
 from train_resume_all_categories import (  # noqa: E402
     DATASET_DIR, GENERATED_VAL_MANIFEST, build_broad_val_manifest,
@@ -77,12 +78,6 @@ GENERATED_DATASET_YAML = GENERATED_DIR / "dataset.generated.yaml"
 
 TRUSTED_AGREEMENT_THRESHOLD = 0.67  # >= 2 of 3 reference models corroborate
 IOU_MATCH_THRESHOLD = 0.5
-
-
-def _is_trusted(label) -> bool:
-    return label.label_source == "human_dataset" or (
-        label.cross_model_agreement is not None and label.cross_model_agreement >= TRUSTED_AGREEMENT_THRESHOLD
-    )
 
 
 def _to_xyxy(label) -> tuple[float, float, float, float]:
@@ -112,7 +107,7 @@ def build_db_manifest(
     images_dir.mkdir(parents=True, exist_ok=True)
     labels_dir.mkdir(parents=True, exist_ok=True)
 
-    all_images = session.query(SubmittedImage).filter(SubmittedImage.endpoint == "training_import").all()
+    all_images = session.query(Image).filter(Image.training_status == Image.TRAINING_STATUS_APPROVED).all()
     rng = random.Random(0)
     if fraction < 1.0:
         rng.shuffle(all_images)
@@ -122,8 +117,8 @@ def build_db_manifest(
     n_images = 0
     n_oversampled = 0
     for image in all_images:
-        labels = image.detections
-        trusted = [l for l in labels if _is_trusted(l)]
+        labels = image.annotations
+        trusted = [l for l in labels if l.is_trusted(TRUSTED_AGREEMENT_THRESHOLD)]
         if not trusted:
             continue  # nothing worth training on for this image
 
@@ -137,7 +132,8 @@ def build_db_manifest(
         )
 
         current_model_detections = [
-            (l.class_id, _to_xyxy(l)) for l in labels if l.model_name == current_model_name
+            (l.class_id, _to_xyxy(l)) for l in labels
+            if l.label_source.is_model(current_model_name)
         ]
         model_gets_some_wrong = any(_model_missed(l, current_model_detections) for l in trusted)
 
@@ -171,6 +167,30 @@ def main():
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--freeze", type=int, default=0)
     parser.add_argument("--lr0", type=float, default=0.0005)
+    parser.add_argument(
+        "--device", default="cpu", type=resolve_device,
+        help="Passed to model.train(device=...) - verified via device_check.resolve_device as part of "
+        "argument parsing itself (type=resolve_device), so a non-cpu request is smoke-tested before use "
+        "and falls back to cpu if it fails, with no separate call a future edit could forget. Default 'cpu'.",
+    )
+    parser.add_argument(
+        "--cos-lr", action="store_true",
+        help="Use cosine LR decay instead of ultralytics' default linear decay - may help stabilize "
+        "convergence over many epochs. Off by default to preserve existing behavior.",
+    )
+    parser.add_argument(
+        "--warmup-epochs", type=float, default=3.0,
+        help="ultralytics default is 3.0 epochs of LR warmup - appropriate when training from "
+        "scratch/COCO weights, but every round here fine-tunes from an already-good checkpoint "
+        "(--checkpoint), so a long warmup may waste early epochs at a below-target LR instead of "
+        "adapting to this round's reweighted loss. Consider passing 0-1 to test faster adaptation.",
+    )
+    parser.add_argument(
+        "--multi-scale", action="store_true",
+        help="Randomly vary input resolution during training (ultralytics' multi_scale) - may "
+        "improve robustness to license plates photographed at different distances/scales. Off by "
+        "default to preserve existing behavior.",
+    )
     parser.add_argument("--agreement-threshold", type=float, default=TRUSTED_AGREEMENT_THRESHOLD)
     parser.add_argument("--oversample-repeats", type=int, default=3)
     parser.add_argument("--fraction", type=float, default=1.0, help="Subsample of DB images (for smoke-testing).")
@@ -210,7 +230,7 @@ def main():
     model = YOLO(args.checkpoint)
     model.add_callback("on_train_start", lambda trainer: setattr(trainer.model, "class_weights", class_weights))
 
-    print(f"[train-from-db] Starting training: epochs={args.epochs} imgsz={args.imgsz} freeze={args.freeze}")
+    print(f"[train-from-db] Starting training: epochs={args.epochs} imgsz={args.imgsz} freeze={args.freeze} device={args.device}")
     model.train(
         data=str(GENERATED_DATASET_YAML),
         epochs=args.epochs,
@@ -218,16 +238,13 @@ def main():
         batch=args.batch,
         freeze=args.freeze,
         lr0=args.lr0,
+        cos_lr=args.cos_lr,
+        warmup_epochs=args.warmup_epochs,
+        multi_scale=args.multi_scale,
         project=args.project,
         name=args.name,
         exist_ok=True,
-        # device="cpu": on taco (ROCm-enabled torch), letting ultralytics
-        # auto-select the GPU raised "HIP error: invalid device function"
-        # outright (same iGPU/PyTorch-ROCm-build incompatibility already
-        # worked around in compute_label_confidence.py's inference calls,
-        # this time during actual training) - CPU is the reliable default
-        # everywhere this script runs.
-        device="cpu",
+        device=args.device,
     )
 
     best_path = str(model.trainer.save_dir / "weights" / "best.pt")
