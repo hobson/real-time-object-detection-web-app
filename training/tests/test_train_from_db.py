@@ -82,3 +82,67 @@ def test_build_db_manifest_ignores_endpoint_field(db_session, tmp_path, monkeypa
     )
 
     assert n_images == 1
+
+
+class _FakeTrainer:
+    """Duck-typed stand-in for ultralytics' BaseTrainer - _save_best_by_f1
+    only reads trainer.metrics/.epoch and reads+writes trainer.last/.best
+    (real Path objects, backed by tmp_path so no ultralytics/torch
+    checkpoint format is needed - the callback only copies bytes, it never
+    parses them)."""
+
+    def __init__(self, tmp_path, precision, recall, epoch=0):
+        self.metrics = {"metrics/precision(B)": precision, "metrics/recall(B)": recall}
+        self.epoch = epoch
+        self.last = tmp_path / "last.pt"
+        self.best = tmp_path / "best.pt"
+
+
+def test_save_best_by_f1_saves_on_first_validation(tmp_path):
+    trainer = _FakeTrainer(tmp_path, precision=0.8, recall=0.6)
+    trainer.last.write_bytes(b"epoch0-weights")
+
+    train_from_db._save_best_by_f1(trainer)
+
+    assert trainer.best.read_bytes() == b"epoch0-weights"
+    assert trainer._best_f1 == 2 * 0.8 * 0.6 / (0.8 + 0.6)
+
+
+def test_save_best_by_f1_skips_when_f1_does_not_improve(tmp_path):
+    trainer = _FakeTrainer(tmp_path, precision=0.8, recall=0.6)
+    trainer.last.write_bytes(b"epoch0-weights")
+    train_from_db._save_best_by_f1(trainer)
+
+    # Next epoch: worse F1 (lower precision, same recall) - best.pt must NOT
+    # be overwritten with this epoch's (worse) weights.
+    trainer.metrics = {"metrics/precision(B)": 0.5, "metrics/recall(B)": 0.6}
+    trainer.epoch = 1
+    trainer.last.write_bytes(b"epoch1-weights")
+    train_from_db._save_best_by_f1(trainer)
+
+    assert trainer.best.read_bytes() == b"epoch0-weights"
+
+
+def test_save_best_by_f1_overwrites_when_f1_improves(tmp_path):
+    trainer = _FakeTrainer(tmp_path, precision=0.8, recall=0.6)
+    trainer.last.write_bytes(b"epoch0-weights")
+    train_from_db._save_best_by_f1(trainer)
+
+    trainer.metrics = {"metrics/precision(B)": 0.9, "metrics/recall(B)": 0.9}
+    trainer.epoch = 1
+    trainer.last.write_bytes(b"epoch1-weights")
+    train_from_db._save_best_by_f1(trainer)
+
+    assert trainer.best.read_bytes() == b"epoch1-weights"
+    assert trainer._best_f1 == 0.9
+
+
+def test_save_best_by_f1_handles_missing_metrics(tmp_path):
+    """A skipped-validation epoch (e.g. val runs only every N epochs) must
+    not crash or touch best.pt."""
+    trainer = _FakeTrainer(tmp_path, precision=None, recall=None)
+    trainer.last.write_bytes(b"epoch0-weights")
+
+    train_from_db._save_best_by_f1(trainer)
+
+    assert not trainer.best.exists()

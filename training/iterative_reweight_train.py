@@ -37,7 +37,7 @@ the next via stale module-level state.
 Usage: python training/iterative_reweight_train.py \
     [--checkpoint runs/detect/runs/license_plate/license_plate_ft_reweight_round3/weights/best.pt] \
     [--initial-model-name license_plate_ft_reweight_round3] \
-    [--max-rounds 3] [--epochs-per-round 50] [--convergence-threshold 0.1]
+    [--max-rounds 3] [--epochs-per-round 10] [--convergence-threshold 0.1]
 """
 import argparse
 import subprocess
@@ -72,7 +72,12 @@ def main():
         "compute_label_confidence.py run against it - used as round 1's --current-model-name.",
     )
     parser.add_argument("--max-rounds", type=int, default=3)
-    parser.add_argument("--epochs-per-round", type=int, default=50)
+    parser.add_argument(
+        "--epochs-per-round", type=int, default=10,
+        help="Passed to train_from_db.py's --epochs - see its help for why the default was lowered "
+        "from 50: shorter rounds mean more frequent round-boundary resume points (see "
+        "--skip-training-for-round) on top of train_from_db.py's own per-epoch F1-best checkpointing.",
+    )
     parser.add_argument("--convergence-threshold", type=float, default=0.1)
     parser.add_argument("--agreement-threshold", type=float, default=0.67, help="Passed to train_from_db.py - see its --agreement-threshold help.")
     parser.add_argument("--oversample-repeats", type=int, default=3, help="Passed to train_from_db.py.")

@@ -41,7 +41,7 @@ session's iterative_reweight_train.py loop has already run.
 Usage: python training/train_from_db.py \
     [--checkpoint runs/.../license_plate_ft_reweight_round3/weights/best.pt] \
     [--current-model-name license_plate_ft_reweight_round3] \
-    [--epochs 50] [--agreement-threshold 0.67] [--oversample-repeats 3]
+    [--epochs 10] [--agreement-threshold 0.67] [--oversample-repeats 3]
 """
 import argparse
 import random
@@ -155,6 +155,35 @@ def build_db_manifest(
     return n_images, n_oversampled, len(manifest)
 
 
+def _save_best_by_f1(trainer) -> None:
+    """Ultralytics already writes weights/best.pt using its own fitness
+    formula (a weighted mAP50/mAP50-95 blend) whenever a new epoch's
+    fitness beats the previous one - see BaseTrainer.save_model(), which
+    always runs before this callback fires. This additionally tracks F1
+    (precision/recall averaged across all classes, from
+    trainer.metrics["metrics/precision(B)"]/["metrics/recall(B)"] - already
+    the all-class mean, not per-class) across the run, and overwrites
+    weights/best.pt with the CURRENT epoch's checkpoint (trainer.last, which
+    ultralytics already wrote this epoch) whenever F1 improves on this run's
+    best F1 so far - regardless of what ultralytics' own fitness comparison
+    decided. Registered on "on_fit_epoch_end", which fires after this
+    epoch's validation + ultralytics' own save_model() call and before the
+    next epoch starts.
+    """
+    precision = trainer.metrics.get("metrics/precision(B)")
+    recall = trainer.metrics.get("metrics/recall(B)")
+    if precision is None or recall is None:
+        return  # no validation ran this epoch
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    best_so_far = getattr(trainer, "_best_f1", -1.0)
+    if f1 > best_so_far:
+        trainer._best_f1 = f1
+        if trainer.last.exists():
+            trainer.best.write_bytes(trainer.last.read_bytes())
+            print(f"[train-from-db] Epoch {trainer.epoch + 1}: F1={f1:.4f} (P={precision:.4f} R={recall:.4f}) "
+                  f"improved on this run's best - saved {trainer.best}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True, help="Starting checkpoint - a previously fine-tuned 81(+)-class model.")
@@ -163,7 +192,12 @@ def main():
         "--current-model-name", default="license_plate_ft_reweight_round3",
         help="Must match the model_name compute_label_confidence.py most recently persisted detections under - see module docstring.",
     )
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument(
+        "--epochs", type=int, default=10,
+        help="Lower than a typical from-scratch training run (was 50) so each round's checkpoint "
+        "lands sooner - see iterative_reweight_train.py's --skip-training-for-round for why a "
+        "round boundary matters as a resume point (e.g. after an SSH disconnect).",
+    )
     parser.add_argument("--imgsz", type=int, default=256)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--freeze", type=int, default=0)
@@ -230,6 +264,7 @@ def main():
     print(f"[train-from-db] Loading checkpoint {args.checkpoint}")
     model = YOLO(args.checkpoint)
     model.add_callback("on_train_start", lambda trainer: setattr(trainer.model, "class_weights", class_weights))
+    model.add_callback("on_fit_epoch_end", _save_best_by_f1)
 
     print(f"[train-from-db] Starting training: epochs={args.epochs} imgsz={args.imgsz} freeze={args.freeze} device={args.device}")
     model.train(
