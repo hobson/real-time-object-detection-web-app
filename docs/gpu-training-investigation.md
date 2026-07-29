@@ -40,19 +40,45 @@ processes from using the GPU. Ruled out directly:
   with the current system driver stack. This is a second, separate problem
   layered on top of the missing-gfx1151-kernel issue.
 
-## Candidate fix, in progress
+## 2026-07-28 (later): torch+rocm7.1 fixes the kernel-list gap, but a new segfault remains
 
-PyTorch publishes `rocm7.1`/`rocm7.2` wheels (up to torch 2.13.0, `cp314` -
-matching taco's system Python 3.14 and current ROCm 7.1 userspace exactly).
-Testing `torch==2.13.0+rocm7.1` in an isolated venv (via `uv venv` /
-`uv pip install` - use `uv` for all Python package/venv management on this
-project per project convention, not raw `pip`/`venv`) at
-`/tmp/rocm7_test_venv` on taco, touching no project venv. Once installed,
-re-running the same matmul/conv2d/backward smoke test to check both (a) ABI
-compatibility with the current ROCm 7.1 system libraries and (b) whether
-gfx1151 is actually in this build's compiled kernel list.
+Installed `torch==2.13.0+rocm7.1` (matches taco's system Python 3.14 and
+system ROCm 7.1 userspace) into an isolated venv at `/tmp/rocm7_test_venv`
+via `uv venv` / `uv pip install` (use `uv` for all Python package/venv
+management on this project, not raw `pip`/`venv`) - touches no project venv.
+
+- `torch.cuda.get_arch_list()` now **includes `gfx1151`** - the original
+  missing-kernel problem is fixed by this build.
+- But a bare `torch.randn(64, 64, device='cuda')` - no compute, just
+  allocation + the RNG fill kernel - now **segfaults** (`Segmentation fault
+  (core dumped)`, exit 139), where the old rocm6.4 build at least raised a
+  catchable `HIP error` exception. `torch.cuda.is_available()` and
+  `torch.cuda.get_device_properties(0)` both still succeed - only an actual
+  kernel launch crashes.
+- **Explicitly ruled out GPU contention as the cause of this new crash
+  too**: stopped `llama-multi-models.service` entirely (`systemctl --user
+  stop` + `disable`, so it won't auto-restart) and reran the same bare
+  allocation with the GPU otherwise completely idle - still segfaults
+  identically. This is not resource contention.
+
+**Current state**: `llama-multi-models.service` is stopped and disabled on
+taco (not just stopped - won't come back on reboot/login) until this is
+resolved, per explicit instruction, since it doesn't help and there's no
+reason to have it competing for VRAM while this is investigated further.
+
+**Not yet resolved.** The remaining crash is a deeper driver/runtime
+incompatibility - likely an HSA runtime / kernel-mode driver (amdgpu) /
+comgr version mismatch, or a bug specific to this rocm7.1 torch build on
+gfx1151 - not something fixable by picking a different wheel alone. Next
+steps if this gets picked back up: check `dmesg`/kernel logs for the actual
+fault address/module at crash time (needs elevated permissions not
+available in this session), try `AMD_SERIALIZE_KERNEL=3`/
+`HSA_ENABLE_SDMA=0`-style ROCm debug env vars, or try a torch7.2 build
+instead of 7.1.
 
 **Do not modify `training/.venv` (or any other in-use project venv) while
 Phase G's background training job is running** - it's actively using that
 exact venv. Any real fix (installing a working torch+rocm build into
-`training/.venv`) waits until that job is confirmed finished.
+`training/.venv`) waits until that job is confirmed finished AND this
+segfault is actually resolved - installing rocm7.1 into the real venv
+right now would just trade one broken `--device cuda` for another.
