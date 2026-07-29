@@ -16,6 +16,7 @@
 #   ./scripts/deploy_taco_frontend.sh
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/lib/check_alive.sh
 
 # Sanity-check the build locally first.
 npm run build
@@ -39,6 +40,6 @@ ssh taco "cd ${REMOTE_DIR} && PATH=\$HOME/.nvm/versions/node/v24.18.0/bin:\$PATH
 
 ssh taco "systemctl --user restart object-detection-web.service"
 ssh taco "systemctl --user is-active object-detection-web.service"
-curl -sf -o /dev/null -w "GET / -> %{http_code}\n" https://taco.tail9f615d.ts.net:10000/
-curl -sf -o /dev/null -w "GET /runtime/yolo-v9-t-384-license-plate-end2end.onnx -> %{http_code}\n" \
-  https://taco.tail9f615d.ts.net:10000/runtime/yolo-v9-t-384-license-plate-end2end.onnx
+check_alive \
+  "https://taco.tail9f615d.ts.net:10000/" \
+  "https://taco.tail9f615d.ts.net:10000/runtime/yolo-v9-t-384-license-plate-end2end.onnx"

@@ -7,10 +7,12 @@
     body { font-family: sans-serif; background: #222; color: #eee; margin: 0; padding: 16px; }
     a { color: #6cf; }
     #controls {
-      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      display: flex; align-items: flex-start; gap: 24px; flex-wrap: wrap;
       margin-bottom: 12px; padding: 10px 14px; background: #333; border-radius: 6px;
     }
-    #controls label { display: flex; align-items: center; gap: 6px; }
+    #source-list { display: flex; flex-direction: column; gap: 4px; }
+    #source-list label { display: flex; align-items: center; gap: 6px; font-weight: normal; }
+    #controls > div > strong { display: block; margin-bottom: 6px; }
     #confidence-value { font-variant-numeric: tabular-nums; min-width: 3.5em; display: inline-block; }
     #canvas-wrap { max-width: 100%; overflow: auto; }
     canvas { max-width: 100%; height: auto; border: 1px solid #444; }
@@ -21,12 +23,22 @@
   <h3>Image {{ image.id }} <small>({{ image.sha256 }})</small></h3>
 
   <div id="controls">
-    <label><input type="checkbox" id="show-labels" checked> Show labels</label>
-    <label>
-      Min confidence
-      <input type="range" id="confidence-threshold" min="0" max="1.01" step="0.01" value="0">
-      <span id="confidence-value">0.00</span>
-    </label>
+    <div>
+      <strong>Labels from</strong>
+      <div id="source-list">
+        <label><input type="radio" name="source" value="" checked> None</label>
+        {% for source in sources %}
+        <label><input type="radio" name="source" value="{{ source }}">{{ source }}</label>
+        {% endfor %}
+      </div>
+    </div>
+    <div>
+      <strong>Min confidence</strong>
+      <label>
+        <input type="range" id="confidence-threshold" min="0" max="1.01" step="0.01" value="0">
+        <span id="confidence-value">0.00</span>
+      </label>
+    </div>
   </div>
 
   <div id="canvas-wrap">
@@ -37,27 +49,37 @@
     // Annotations: box fields are normalized 0-1 (YOLO x_center/y_center/
     // width/height) - scaled against the loaded image's natural pixel size
     // below, not against `image.width`/`image.height` from the DB (which
-    // can be null/stale), so boxes stay pixel-accurate regardless.
+    // can be null/stale), so boxes stay pixel-accurate regardless. `source`
+    // is the producing LabelSource's display name (see curation.py's
+    // _label_source_display_name) - one radio button per distinct value,
+    // plus "None" (empty value) to show nothing.
     const annotations = {{ annotations | tojson }};
 
     const img = new Image();
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const showLabelsEl = document.getElementById('show-labels');
+    const sourceInputs = document.querySelectorAll('input[name="source"]');
     const thresholdEl = document.getElementById('confidence-threshold');
     const thresholdValueEl = document.getElementById('confidence-value');
+
+    function selectedSource() {
+      for (const el of sourceInputs) if (el.checked) return el.value;
+      return '';
+    }
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      if (!showLabelsEl.checked) return;
+      const source = selectedSource();
+      if (!source) return; // "None" selected
 
       // threshold=1.01 -> nothing passes (every real confidence is <=1.0,
       // and null-confidence boxes are normalized to 1.0 server-side);
       // threshold=0 -> everything passes.
       const threshold = parseFloat(thresholdEl.value);
       for (const a of annotations) {
+        if (a.source !== source) continue;
         if (a.confidence < threshold) continue;
 
         const x0 = (a.x_center - a.width / 2) * canvas.width;
@@ -88,7 +110,7 @@
     };
     img.src = {{ image_url | tojson }};
 
-    showLabelsEl.addEventListener('change', draw);
+    for (const el of sourceInputs) el.addEventListener('change', draw);
     thresholdEl.addEventListener('input', () => {
       thresholdValueEl.textContent = parseFloat(thresholdEl.value).toFixed(2);
       draw();

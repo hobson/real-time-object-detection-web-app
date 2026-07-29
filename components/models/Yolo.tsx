@@ -365,7 +365,7 @@ type PostprocessFunction = (
   classNames: string[]
 ) => void;
 
-const postprocessYolov10: PostprocessFunction = (
+export const postprocessYolov10: PostprocessFunction = (
   ctx: CanvasRenderingContext2D,
   modelResolution: number[],
   tensor: Tensor,
@@ -425,7 +425,7 @@ const postprocessYolov10: PostprocessFunction = (
   onDetections(detections);
 };
 
-const postprocessYolov7: PostprocessFunction = (
+export const postprocessYolov7: PostprocessFunction = (
   ctx: CanvasRenderingContext2D,
   modelResolution: number[],
   tensor: Tensor,

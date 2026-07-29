@@ -86,8 +86,6 @@ In order of how each bug was found, cheapest/weakest to most expensive/strongest
 
 The practical rule this suggests for similar work: never trust "the weights I checked are correct" as equivalent to "the model works," and never trust "the happy path works" as equivalent to "the operational procedure (interrupt, resume, recover) works."
 
-<<<<<<< HEAD
-=======
 `training/review_confusion_matrix.py` generated per-class confusion grids
 (predicted vs. actual, sampled from misclassified examples) for the three
 categories this fine-tune touches:
@@ -96,7 +94,6 @@ categories this fine-tune touches:
 ![person confusion grid](./images/person_confusion_grid.png)
 ![license plate confusion grid](./images/license_plate_confusion_grid.png)
 
->>>>>>> 00189ca3dedb7f88ca31d958deec2e78b2e52c7f
 ## Current status
 
 Architecture and resume are now verified robust (see Bugs 1-4 above), and the dataset has been pseudo-labeled. No trained model has been produced/exported yet as of this report — training was intentionally paused mid-run to let these fixes land first; the next actual training run is expected to happen on taco (more compute available there) rather than continuing locally. See "Next steps" below.

@@ -38,22 +38,19 @@ SearchableMixin / auto_sortable_columns / auto_searchable_columns
     layer.
 """
 import itertools
+import os
 from functools import cached_property
 
+from clean_db import abbreviate_hash
 from flask import Flask, abort, render_template, send_file, send_from_directory, url_for
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
+from flask_admin_toolkit import SearchableMixin, auto_searchable_columns, auto_sortable_columns
 from flask_sqlalchemy import SQLAlchemy
 from markupsafe import Markup
-
-from flask_admin_toolkit import SearchableMixin, auto_searchable_columns, auto_sortable_columns
-
-from clean_db import abbreviate_hash
 from orm import Annotation, Base, Dataset, Image, LabelSource, Tag
 from persist import STORAGE_DIR, THUMBNAIL_DIR
-
-import os
 
 FLASK_SECRET = os.environ.get("FLASK_SECRET", "dev-secret-key-change-in-production")
 
@@ -142,6 +139,21 @@ def _tags_formatter(view, context, model, name):
     return ", ".join(t.name for t in model.tags) if model.tags else ""
 
 
+<<<<<<< HEAD
+=======
+def _label_source_display_name(label_source: LabelSource) -> str:
+    """Human-readable identity for a LabelSource, for the image detail
+    page's per-source radio buttons (see image_view_page) - mirrors
+    LabelSource.__repr__'s per-source_type branching but without the
+    id/debug framing, since this is user-facing UI text, not a repr."""
+    if label_source.source_type == "model":
+        return f"Model: {label_source.model_name}"
+    if label_source.source_type == "dataset":
+        return f"Dataset: {label_source.dataset.name}" if label_source.dataset else "Dataset: (unknown)"
+    return f"Curator: {label_source.curator_username}"
+
+
+>>>>>>> 345461a6cb7af79bfabe90381a7e2c053fd79c36
 def _sha256_formatter(view, context, model, name):
     """Table cell shows only an abbreviated hash (see clean_db.abbreviate_
     hash) - the full sha256 is available via this same link's title tooltip
@@ -329,11 +341,25 @@ def create_app(db_url: str | None = None) -> Flask:
     def image_view_page(image_id):
         """Full-size image with detection boxes/labels/OCR text drawn on a
         canvas overlay - client-side JS does the drawing (see
+<<<<<<< HEAD
         templates/image_view.html) so the show/hide toggle and confidence
         slider redraw instantly with no round trip. Annotation data is
         embedded directly in the page (one query, no separate JSON
         endpoint) since this page has exactly one consumer (a human loading
         it once) - not worth a second route."""
+=======
+        templates/image_view.html) so the source-selection radios and
+        confidence slider redraw instantly with no round trip. Annotation
+        data is embedded directly in the page (one query, no separate JSON
+        endpoint) since this page has exactly one consumer (a human loading
+        it once) - not worth a second route.
+
+        Every annotation is tagged with its producing label_source's
+        display name (see _label_source_display_name) so the page can offer
+        a radio button per distinct source - "which model/dataset/curator's
+        labels am I looking at" - rather than showing every source's boxes
+        overlaid on top of each other at once."""
+>>>>>>> 345461a6cb7af79bfabe90381a7e2c053fd79c36
         image = db.session.get(Image, image_id)
         if image is None:
             abort(404)
@@ -351,14 +377,28 @@ def create_app(db_url: str | None = None) -> Flask:
                 "x_center": a.x_center, "y_center": a.y_center,
                 "width": a.width, "height": a.height,
                 "plate_text": a.plate_text,
+<<<<<<< HEAD
             }
             for a in image.annotations
         ]
+=======
+                "source": _label_source_display_name(a.label_source),
+            }
+            for a in image.annotations
+        ]
+        # Distinct sources, in first-seen order (dict preserves insertion
+        # order and dedupes for free) - the radio button list.
+        sources = list(dict.fromkeys(a["source"] for a in annotations))
+>>>>>>> 345461a6cb7af79bfabe90381a7e2c053fd79c36
         return render_template(
             "image_view.html",
             image=image,
             image_url=url_for("image_full_file", image_id=image.id),
             annotations=annotations,
+<<<<<<< HEAD
+=======
+            sources=sources,
+>>>>>>> 345461a6cb7af79bfabe90381a7e2c053fd79c36
         )
 
     # Tables are created once via `python orm.py` (see docs/user-manual.md
